@@ -24,8 +24,6 @@ dependencies:
   - liquidhaskell
   - liquid-containers
   - stm
-  - network < 2.7
-# - full-sessions
 
 ghc-options:
   - -fplugin=LiquidHaskell

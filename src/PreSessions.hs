@@ -2,83 +2,73 @@
 {-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--ple" @-}
 
-{-# LANGUAGE ConstraintKinds, FlexibleContexts,
-             TypeFamilies, UndecidableInstances, EmptyDataDecls, ScopedTypeVariables #-}
+{-# LANGUAGE GADTs                   #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE InstanceSigs            #-}
+{-# LANGUAGE NoImplicitPrelude       #-}
+{-# LANGUAGE RankNTypes              #-}
+{-# LANGUAGE TypeFamilies            #-}
+{-# LANGUAGE TypeFamilyDependencies  #-}
+{-# LANGUAGE UndecidableInstances    #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE InstanceSigs #-}
 module PreSessions where
 
 import Data.Typeable
 import Control.Concurrent.Chan
 import Control.Concurrent
+import qualified OneShot
+import Data.Bifunctor (Bifunctor(bimap))
+import Data.Functor ((<$>))
+import Data.Tuple (swap)
+import Control.Monad (void)
+import GHC.Base (IO, return, (.), ($), error)
 
-readForcedSend :: Chan (Send a t) -> IO (a, Chan t)
-readForcedSend c = do
-    (Send a t) <- readChan c
-    return (a, t)
+-- * Session types
 
-writeForcedRecv :: Chan (Recv a t) -> a -> Chan t -> IO ()
-writeForcedRecv c a t = writeChan c (Recv a t) 
+newtype Send a s = Send (OneShot.SendOnce (a, Dual s))
+newtype Recv a s = Recv (OneShot.RecvOnce (a, s))
+newtype End      = End OneShot.SyncOnce
 
-data Send a t = Send a (Chan t)
-data Recv a t = Recv a (Chan t)
-data End
 
-newtype ChanSend t = C (Chan t)
+-- * Duality and session initiation
 
-send :: Chan (Send a t) -> a -> IO (Chan t)
-send c x = do
-    c' <- newChan
-    writeChan c (Send x c')
-    return c'
+-- con esto ghc da stack overflow, o sea, Session (Dual s)
+-- class ( Session (Dual s), Dual (Dual s) ~ s) => Session s where
+class (Dual (Dual s) ~ s) => Session s where
+  type Dual s = result | result -> s
+  new :: IO (s, Dual s)
 
-send' :: ChanSend (a t) -> a -> IO (Chan t)
-send' c x = do
-    c' <- newChan
-    writeChan c (Send x c')
-    return c'
+instance Session s => Session (Send a s) where
+  type Dual (Send a s) = Recv a (Dual s)
+  new = bimap Send Recv <$> OneShot.new
 
-recv :: Chan (Recv a t) -> IO (a, Chan t)
-recv c = do
-    (Recv a c') <- readChan c
-    return (a, c')
+instance Session s => Session (Recv a s) where
+  type Dual (Recv a s) = Send a (Dual s)
+  new = bimap Recv Send . swap <$> OneShot.new
 
-close :: Chan End -> IO ()
-close c = return ()
+instance Session End where
+  type Dual End = End
+  new = bimap End End <$> OneShot.newSync
 
-{-@ fork :: (Link s s', Dual s s') => (Chan s -> IO ()) -> IO (Chan s') @-}
-fork :: (Link s s', Dual s s') => (Chan s -> IO ()) -> IO (Chan s')
-fork f = do
-    c <- newChan
-    c' <- newChan
-    forkIO $ link (c, c')
-    forkIO (f c)
-    return c'
+instance Session () where
+  type Dual () = ()
+  new = return ((), ())
 
-class Dual s t | s -> t, t -> s where
 
-instance (Dual t t') => Dual (Send a t) (Recv a t')
-instance (Dual t t') => Dual (Recv a t) (Send a t')
-instance Dual End End
+-- * Communication primitives
 
-class Link s s' where
-    link :: (Dual s s') => (Chan s, Chan s') -> IO ()
+send :: Session s => (a, Send a s) -> IO s
+send (x, Send ch_s) = do
+  (here, there) <- new
+  OneShot.send ch_s (x, there)
+  return here
 
-instance (Link t t', Dual t t') => Link (Send a t) (Recv a t') where
-    link (c0, c1) = do
-        (x, c0') <- readForcedSend c0
-        c1' <- newChan
-        forkIO $ link (c0', c1')
-        writeForcedRecv c1 x c1'
+recv :: Recv a s -> IO (a, s)
+recv (Recv ch_r) = OneShot.recv ch_r
 
-instance (Link t t', Dual t t') => Link (Recv a t) (Send a t') where
-    link (c0, c1) = do
-        (x, c1') <- readForcedSend c1
-        c0' <- newChan
-        forkIO $ link (c0', c1')
-        writeForcedRecv c0 x c0'
+close :: End -> IO ()
+close (End sync) = OneShot.sync sync
 
-instance Link End End where
-    link (c0, c1) = return ()
+connect :: (Session s) => (s -> IO ()) -> (Dual s -> IO a) -> IO a
+connect k1 k2 = do (s1, s2) <- new; void $ forkIO (k1 s1); k2 s2

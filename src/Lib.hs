@@ -1,146 +1,60 @@
-{-# LANGUAGE FlexibleContexts, NoMonomorphismRestriction, AllowAmbiguousTypes #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE PolyKinds #-}
-
 {-@ LIQUID "--prune-unsorted"        @-}
 
 module Lib where
 import Prelude
-import Control.Concurrent (Chan, newChan, forkIO, writeChan, readChan)
-import PreSessions (Recv, Send, End, send, recv, close, fork, Link (link), Dual)
+import qualified OneShot
+import Control.Concurrent (forkIO)
+import PreSessions
 
-{-@ type BF = { v: Bool | not v } @-}
+-- mainFunc = putStrLn "Hello world"
 
--- {-@ client1 :: (Chan (Recv BF (Send BF End))) -> IO () @-}
--- client1 :: Chan (Recv Bool (Send Bool End)) -> IO ()
-client1 s0 = do
-    (v,s) <- recv s0
-    s <- send s v
-    close s
-
--- {-@ client1 :: (Chan (Recv Bool (Send BF End))) -> IO () @-}
---    s <- send s True
-
-
--- También podés tipar el server1
-
--- {-@ server1 :: (Chan (Send BF (Recv BF End))) -> IO () @-}
-server1 s = do
-    s <- send s False
-    (b, s) <- recv s
-    close s
-    putStrLn $ if b then show b else "None"
-
--- Pero el problema es en el fork. Hay algo en la noción de subtipado que no se combina bien con LH.
-
--- mainFunc = print "hello"
-
--- Por ejemplo, si haces esto
--- mainFunc = do
---    c' <- fork client1
---    server1 c'
--- no pasa las constraint. Esto hay que pensarlo bien:
-
--- mainFunc = do
---    c <- newChan 
---    client1 c
-
-{-@ clientS :: Chan (Recv { i: Int | i == 5 } End) -> IO () @-}
--- clientS :: Chan (Recv Int End) -> IO ()
-clientS s0 = do
-    (v,s) <- recv s0
-    printFive v
-    close s
-
--- {-@ serverS :: Chan (Send {i: Int | i == 5} End) -> IO () @-}
--- serverS :: Chan (Send Int End) -> IO ()
-serverS s = do
-    s <- send s 5
-    close s
+-- para ver que realmente funcione el oneshot
+testOneShot = do
+    (tx, rx) <- OneShot.new
+    (a, b) <- OneShot.newSync
+    forkIO $ (OneShot.send tx "hello world!" >> OneShot.sync b)
+    OneShot.sync a
+    OneShot.recv rx
+    return ()
 
 mainFunc = do
-    c' <- fork2 clientS
-    serverS c'
+    testOneShot
+    pingWorks
+    divSession
 
--- {-@ fork2 :: (Link s s', Dual s s') => (Chan { s: Int | s == 5 } -> IO ()) -> IO (Chan s') @-}
-fork2 :: (Link s s', Dual s s') => (Chan s -> IO ()) -> IO (Chan s')
-fork2 f = do
-    c <- newChan
-    c' <- newChan
-    forkIO $ link (c, c')
-    forkIO (f c)
-    return c'
+type Ping = Send () End
+type Pong = Dual Ping
 
-{-@ printFive :: { i:Int | i == 5 }  -> IO () @-}
-printFive :: Int -> IO ()
-printFive = print
+pingWorks :: IO ()
+pingWorks = connect ping pong
 
--- mainFunc' :: IO ()
--- mainFunc' = do
---     c <- newChan
---     writeChan c 5
---     -- writeChan c 4 -- agregando esto no pasa
---     -- writeChan c 5 -- pero agregando esto sí
---     f <- readChan c
---     printFive f
+ping :: Ping -> IO ()
+ping s = do
+    s <- send ((), s)
+    close s
 
-mainFunc'' :: IO ()
-mainFunc'' = do
-    c <- newChan
-    c' <- newChan
-    forkIO $ link' c c'
-    -- forkIO $ writeChan c 4 -- esto falla
-    forkIO $ writeChan c 5
-    v <- readChan c'
-    printFive v
+pong :: Pong -> IO ()
+pong s = do
+    ((), s) <- recv s
+    close s
 
-link' :: Chan a -> Chan a -> IO ()
-link' c c' = do
-    v <- readChan c
-    writeChan c' v
+divSession :: IO ()
+divSession = connect divServer divClient
 
-newtype B1 a = B1 a
-newtype B2 a = B2 a
+{-@ divServer :: Recv Int (Recv {i: Int | i /= 0 } (Send Int End)) -> IO () @-}
+divServer :: Recv Int (Recv Int (Send Int End)) -> IO ()
+divServer s = do
+    (a, s) <- recv s
+    (b, s) <- recv s
+    s <- send (a `div` b, s)
+    close s
 
-class Wrapper ( c :: * -> * ) where
-    unwrap :: c a -> a
-    wrap :: a -> c a
+{-@ divClient :: (Send Int (Send {i: Int | i /= 0} (Recv Int End))) -> IO () @-}
+divClient :: (Send Int (Send Int (Recv Int End))) -> IO ()
+divClient s = do
+    s <- send (2, s)
+    s <- send (0, s)
+    (answer, s) <- recv s
+    print answer
+    close s
 
-instance Wrapper B1 where
-    unwrap (B1 a) = a
-    wrap a = B1 a
-
-instance Wrapper B2 where
-    unwrap (B2 a) = a
-    wrap a = B2 a
-
-newtype ChannelWrapper a ( b :: * -> * ) = C (Chan (b a))
-
-readWrapped :: (Wrapper b) => ChannelWrapper a b -> IO a
-readWrapped (C a) = unwrap <$> readChan a
-
-writeWrapped :: (Wrapper b) => ChannelWrapper a b -> a -> IO ()
-writeWrapped (C a) = writeChan a . wrap
-
-newWrapped :: IO (ChannelWrapper a b)
-newWrapped = C <$> newChan
-
-type family
-    DualB ( s :: * -> * ) where
-    DualB B1 = B2
-    DualB B2 = B1
-
--- mainFunc :: IO ()
--- mainFunc = do
---     c <- newWrapped
---     c' <- newWrapped
---     forkIO (linkB c c')
---     forkIO (writeWrapped c 4)
---     v <- readWrapped c'
---     printFive v
-
--- linkB :: ChannelWrapper a B1 -> ChannelWrapper a (DualB B1) -> IO ()
-linkB :: ChannelWrapper a B1 -> ChannelWrapper a B2 -> IO ()
-linkB c c' = do
-    v <- readWrapped c
-    writeWrapped c' v 
