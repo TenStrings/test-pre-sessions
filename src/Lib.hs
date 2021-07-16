@@ -45,20 +45,49 @@ pong s = do
 divSession :: IO ()
 divSession = connect divServer divClient
 
-{-@ divServer :: Recv Int (Recv {i: Int | i /= 0 } (Send Int End)) -> IO () @-}
-divServer :: Recv Int (Recv Int (Send Int End)) -> IO ()
+data NZ = NZ Int
+{-@ NZ :: {i: Int | i != 0 } -> NZ @-}
+
+{-@toInt :: NZ -> { i: Int | i != 0 }@-}
+toInt :: NZ -> Int
+toInt (NZ i) = i
+
+
+-- {-@ divServer :: Recv Int (Recv {i: Int | i /= 0 } (Send Int End)) -> IO () @-}
+divServer :: Recv Int (Recv NZ (Send Int End)) -> IO ()
 divServer s = do
     (a, s) <- recv s
     (b, s) <- recv s
-    s <- send (a `div` b, s)
+    s <- send (a `div` toInt b, s)
     close s
 
-{-@ divClient :: (Send Int (Send {i: Int | i /= 0} (Recv Int End))) -> IO () @-}
-divClient :: (Send Int (Send Int (Recv Int End))) -> IO ()
+-- {-@ divClient :: (Send Int (Send {i: Int | i /= 0} (Recv Int End))) -> IO () @-}
+divClient :: (Send Int (Send NZ (Recv Int End))) -> IO ()
 divClient s = do
     s <- send (2, s)
-    s <- send (0, s)
+    s <- send (NZ 1, s)
     (answer, s) <- recv s
-    print answer
+    print $ "answer is " ++ (show answer)
     close s
 
+
+-- divSession' :: IO ()
+-- divSession' = connect divServer divClient
+--
+-- divServer' :: Env -> Recv Int (Recv Int (Send Int End)) -> IO ()
+-- divServer' e s = do
+--     (a, s) <- recv s
+--     (b, s) <- recv s
+--     s <- send (a `div` (b * 2 + 1), s)
+--     close s
+--
+-- -- {-@ divClient :: (Send Int (Send {i: Int | i /= 0} (Recv Int End))) -> IO () @-}
+-- divClient' :: Env -> (Send Int (Send Int (Recv Int End))) -> IO ()
+-- divClient' e s = do
+--     (e, s) <- send' e "x" (2, s)
+--     (e, s) <- send' e "y" (1, s)
+--     (answer, s) <- recv s
+--     print answer
+--     close s
+--
+-- testExpr = print (eval empty (Equal (Number 1) (Number 1)))
