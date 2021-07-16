@@ -1,12 +1,14 @@
 {-@ LIQUID "--prune-unsorted"        @-}
+{-@ LIQUID "--reflection"        @-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Lib where
 import Prelude
 import qualified OneShot
 import Control.Concurrent (forkIO)
 import PreSessions
+import Env (testIncrSession)
 
--- mainFunc = putStrLn "Hello world"
 
 -- para ver que realmente funcione el oneshot
 testOneShot = do
@@ -21,6 +23,8 @@ mainFunc = do
     testOneShot
     pingWorks
     divSession
+    -- divSession'
+    return testIncrSession
 
 type Ping = Send () End
 type Pong = Dual Ping
