@@ -146,10 +146,8 @@ assert :: Bool -> ()
 assert False = error "unreachable"
 assert True = ()
 
-
 -- Session
 
-data Op = Send Var | Recv Var
 data Session = Session { env :: Env, constraint :: Expr } deriving Show
 
 {-@ measure env @-}
