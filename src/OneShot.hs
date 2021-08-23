@@ -20,8 +20,11 @@ import Prelude
 
 -- * One-shot channels
 
-newtype SendOnce a = SendOnce (MVar a)
-newtype RecvOnce a = RecvOnce (MVar a)
+data SendOnce a = SendOnce (MVar a)
+data RecvOnce a = RecvOnce (MVar a)
+
+{-@ data variance SendOnce covariant @-}
+{-@ data variance RecvOnce covariant @-}
 
 new :: IO (SendOnce a, RecvOnce a)
 new = bimap SendOnce RecvOnce <$> dup2 newEmptyMVar

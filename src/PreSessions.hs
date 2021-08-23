@@ -18,6 +18,7 @@ import Data.Typeable
 import Control.Concurrent.Chan
 import Control.Concurrent
 import qualified OneShot
+import OneShot (SendOnce, RecvOnce, SyncOnce)
 import Data.Bifunctor (Bifunctor(bimap))
 import Data.Functor ((<$>))
 import Data.Tuple (swap)
@@ -26,10 +27,12 @@ import GHC.Base (IO, return, (.), ($), error)
 
 -- * Session types
 
-newtype Send a s = Send (OneShot.SendOnce (a, Dual s))
-newtype Recv a s = Recv (OneShot.RecvOnce (a, s))
-newtype End      = End OneShot.SyncOnce
+data Send a s = Send (SendOnce (a, Dual s))
+data Recv a s = Recv (RecvOnce (a, s))
+data End      = End SyncOnce
 
+{-@ data variance Recv covariant covariant @-}
+{-@ data variance Send contravariant covariant @-}
 
 -- * Duality and session initiation
 
@@ -60,6 +63,13 @@ instance Session () where
 
 send :: Session s => (a, Send a s) -> IO s
 send (x, Send ch_s) = do
+  (here, there) <- new
+  OneShot.send ch_s (x, there)
+  return here
+
+{-@ send' :: Session s => v1:a -> Send {v2:a | v1 = v2 } s -> IO s @-}
+send' :: Session s => a -> Send a s -> IO s
+send' x (Send ch_s) = do
   (here, there) <- new
   OneShot.send ch_s (x, there)
   return here
