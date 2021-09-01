@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 74370d827af4b81f9190f6a9c573366ae9358b4bce605a2bb51dfa694d065635
+-- hash: 80ff9c3c15cd80843b49a14363a28d120a854599e88d04e134ebef1f2214c159
 
 name:           main
 version:        0.1.0.0
@@ -27,10 +27,7 @@ source-repository head
 
 library
   exposed-modules:
-      Env
       Lib
-      OneShot
-      PreSessions
   other-modules:
       Paths_main
   hs-source-dirs:
