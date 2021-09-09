@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 80ff9c3c15cd80843b49a14363a28d120a854599e88d04e134ebef1f2214c159
+-- hash: 3b2650568ae5400eeee64d3c062c7273c2cecac51f8276d5d63cb4b43833c874
 
 name:           main
 version:        0.1.0.0
@@ -28,6 +28,7 @@ source-repository head
 library
   exposed-modules:
       Lib
+      RIO
   other-modules:
       Paths_main
   hs-source-dirs:
