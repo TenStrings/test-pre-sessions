@@ -7,16 +7,25 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Lib where
 import Control.Concurrent (Chan, MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
 import Prelude
 import Data.Bifunctor (Bifunctor(bimap))
 import Data.Functor ((<$>))
+import Control.Applicative ((<|>))
 import Data.Tuple (swap)
 import Control.Monad (void)
 
 mainFunc = do
+    print top
     example0
 
 client0 s = do
@@ -125,3 +134,64 @@ sync :: SyncOnce -> IO ()
 sync (SyncOnce ch_s ch_r) = do send' ch_s (); recv' ch_r
 
 -- * Contracts
+
+data Sop a c = Sop a c
+data Rop a c = Rop c
+data Nop = Nop
+
+class Op a where
+  type Dl a = result | result -> a
+  type Comb a b :: *
+
+  cb :: a -> (Dl a) -> Comb a (Dl a) 
+
+instance (Op c) => Op (Sop a c) where
+  type Comb (Sop a c) (Rop a d) = Contract a (Comb c d)
+  type Dl (Sop a c) = Rop a (Dl c) 
+
+  cb (Sop a c) (Rop d) = C a (cb c d) 
+
+instance (Op c) => Op (Rop a c) where
+  type Comb (Rop a c) (Sop a d) = Contract a (Comb c d)
+  type Dl (Rop a c) = Sop a (Dl c)
+
+  cb (Rop c) (Sop a d) = C a (cb c d)
+
+instance Op Nop where
+  type Comb Nop Nop = Contract () () 
+  type Dl Nop = Nop
+
+  cb Nop Nop = N
+
+{-@ data Contract a c <p :: a -> Bool, q :: a -> c -> Bool> = C { val :: a<p>, cont :: c<q val> } | N @-}
+data Contract a c = C { val :: a, cont :: c } | N deriving (Eq, Show)
+
+{-@ data variance Contract contravariant covariant @-}
+{-@ data variance Sop contravariant covariant @-}
+{-@ data variance Rop covariant covariant @-}
+
+{-@ test :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) @-}
+test :: Contract Int (Contract Int (Contract () ()))
+test = C 1 (C 2 N)
+
+-- {-@ top :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) @-}
+top :: Contract Int (Contract Int (Contract () ()))
+top = cb (Sop 1 (Sop 2 Nop)) (Rop (Rop Nop))
+
+{-@ top' :: Contract <{\x -> x = 1}> Int (Contract () ()) @-}
+top' :: Contract Int (Contract () ())
+top' = cb (Sop 1 Nop) (Rop Nop)
+
+
+{-@ validEq :: {v:Bool | v } @-}
+validEq = (cb (Sop 1 Nop) (Rop Nop)) == C 1 N
+-- {-@ assertion :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) -> {v: Bool | v} @-}
+-- assertion :: Contract Int (Contract Int (Contract () ())) -> Bool
+-- assertion c = True
+
+-- t1 = assertion top
+
+
+
+
+---
