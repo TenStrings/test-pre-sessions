@@ -14,6 +14,10 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Lib where
 import Control.Concurrent (Chan, MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
@@ -139,57 +143,51 @@ data Sop a c = Sop a c
 data Rop a c = Rop c
 data Nop = Nop
 
-class Op a where
-  type Dl a = result | result -> a
-  type Comb a b :: *
+class Op a b c | a -> b, a -> c where
+  value :: a -> Maybe b
+  continuation :: a -> Maybe c 
 
-  cb :: a -> (Dl a) -> Comb a (Dl a) 
+instance Op (Sop a c) a c where
+  value (Sop a _) = Just a
+  continuation (Sop _ c) = Just c
 
-instance (Op c) => Op (Sop a c) where
-  type Comb (Sop a c) (Rop a d) = Contract a (Comb c d)
-  type Dl (Sop a c) = Rop a (Dl c) 
+instance Op (Rop a c) a c where
+  value (Rop c) = Nothing
+  continuation (Rop c) = Just c
 
-  cb (Sop a c) (Rop d) = C a (cb c d) 
+instance Op Nop () () where
+  value Nop = Nothing
+  continuation Nop = Nothing
 
-instance (Op c) => Op (Rop a c) where
-  type Comb (Rop a c) (Sop a d) = Contract a (Comb c d)
-  type Dl (Rop a c) = Sop a (Dl c)
+class Comb a a' c | a -> c, a -> a' where
+  combine :: (Op a v d, Op a' v d', Comb d d' c) => a -> a' -> (Contract v c)  
 
-  cb (Rop c) (Sop a d) = C a (cb c d)
+instance (Comb c c' c'') => Comb (Sop v c) (Rop v c') c'' where 
+  combine (Sop a c) (Rop c') = C a (combine c c')
+  -- combine = undefined 
 
-instance Op Nop where
-  type Comb Nop Nop = Contract () () 
-  type Dl Nop = Nop
+instance (Comb c c' c'') => Comb (Rop a c) (Sop a c') c'' where 
+  combine (Rop c) (Sop a c')  = C a (combine c c')
 
-  cb Nop Nop = N
+instance Comb Nop Nop () where
+  combine Nop Nop = N
 
 {-@ data Contract a c <p :: a -> Bool, q :: a -> c -> Bool> = C { val :: a<p>, cont :: c<q val> } | N @-}
 data Contract a c = C { val :: a, cont :: c } | N deriving (Eq, Show)
 
-{-@ data variance Contract contravariant covariant @-}
-{-@ data variance Sop contravariant covariant @-}
+{-@ data variance Contract covariant covariant @-}
+{-@ data variance Sop covariant covariant @-}
 {-@ data variance Rop covariant covariant @-}
 
 {-@ test :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) @-}
 test :: Contract Int (Contract Int (Contract () ()))
 test = C 1 (C 2 N)
 
--- {-@ top :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) @-}
-top :: Contract Int (Contract Int (Contract () ()))
-top = cb (Sop 1 (Sop 2 Nop)) (Rop (Rop Nop))
+{-@ top :: Contract <{\x -> x = 1}> Int (Contract () ()) @-}
+top :: Contract Int (Contract () ())
+top = combine (Sop (1 :: Int) Nop) ((Rop Nop) :: Rop Int _)
 
-{-@ top' :: Contract <{\x -> x = 1}> Int (Contract () ()) @-}
-top' :: Contract Int (Contract () ())
-top' = cb (Sop 1 Nop) (Rop Nop)
-
-
-{-@ validEq :: {v:Bool | v } @-}
-validEq = (cb (Sop 1 Nop) (Rop Nop)) == C 1 N
--- {-@ assertion :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) -> {v: Bool | v} @-}
--- assertion :: Contract Int (Contract Int (Contract () ())) -> Bool
--- assertion c = True
-
--- t1 = assertion top
+---
 
 
 
