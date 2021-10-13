@@ -18,6 +18,8 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE DataKinds #-}
 
 module Lib where
 import Control.Concurrent (Chan, MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
@@ -147,6 +149,11 @@ class Op a b c | a -> b, a -> c where
   value :: a -> Maybe b
   continuation :: a -> Maybe c 
 
+{-@ safeOr :: v1:Maybe a -> {v2: Maybe a | isJust v1 <=> not(isJust v2) } -> a @-}
+safeOr :: Maybe a -> Maybe a -> a
+safeOr (Just a) _ = a
+safeOr _ (Just a) = a
+
 instance Op (Sop a c) a c where
   value (Sop a _) = Just a
   continuation (Sop _ c) = Just c
@@ -159,33 +166,42 @@ instance Op Nop () () where
   value Nop = Nothing
   continuation Nop = Nothing
 
+{-@ unwrap :: { v: Maybe a | isJust v } -> a @-}
+unwrap :: Maybe a -> a
+unwrap (Just a) = a
+unwrap _ = error "unreachable"
+
 class Comb a a' c | a -> c, a -> a' where
-  combine :: (Op a v d, Op a' v d', Comb d d' c) => a -> a' -> (Contract v c)  
+  combine :: a -> a' -> c  
 
-instance (Comb c c' c'') => Comb (Sop v c) (Rop v c') c'' where 
-  combine (Sop a c) (Rop c') = C a (combine c c')
-  -- combine = undefined 
+instance (Comb c c' d) => Comb (Sop v c) (Rop v c') (Contract v d) where 
+  combine :: (Sop v c) -> (Rop v c') -> (Contract v d)
+  combine a a' = C (safeOr (value a) (value a')) (combine (cont a) (cont a'))
+    where 
+      cont = unwrap . continuation
 
-instance (Comb c c' c'') => Comb (Rop a c) (Sop a c') c'' where 
-  combine (Rop c) (Sop a c')  = C a (combine c c')
+instance (Comb c c' d) => Comb (Rop v c) (Sop v c') (Contract v d) where 
+  -- combine (Rop c) (Sop a c')  = C a (combine c c')
+  combine = undefined
 
-instance Comb Nop Nop () where
-  combine Nop Nop = N
+instance Comb Nop Nop (Contract () ()) where
+  -- combine Nop Nop = N
+  combine = undefined
 
 {-@ data Contract a c <p :: a -> Bool, q :: a -> c -> Bool> = C { val :: a<p>, cont :: c<q val> } | N @-}
 data Contract a c = C { val :: a, cont :: c } | N deriving (Eq, Show)
 
-{-@ data variance Contract covariant covariant @-}
-{-@ data variance Sop covariant covariant @-}
-{-@ data variance Rop covariant covariant @-}
+{-@ data variance Contract contravariant covariant @-}
 
 {-@ test :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) @-}
 test :: Contract Int (Contract Int (Contract () ()))
 test = C 1 (C 2 N)
 
-{-@ top :: Contract <{\x -> x = 1}> Int (Contract () ()) @-}
-top :: Contract Int (Contract () ())
-top = combine (Sop (1 :: Int) Nop) ((Rop Nop) :: Rop Int _)
+{-@ test :: Contract <{\x -> x = 1}> Int (Contract () ()) -> () @-}
+test :: Contract Int (Contract () ()) -> ()
+test = combine (Sop (1 :: Int) Nop) ((Rop Nop) :: Rop Int _)
+-- top = undefined
+
 
 ---
 
