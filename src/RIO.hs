@@ -1,17 +1,37 @@
+{-@ LIQUID "--prune-unsorted" @-}
+{-@ LIQUID "--ple" @-}
+{-@ LIQUID "--reflection" @-}
+{-@ LIQUID "--no-adt" @-}
+-- {-@ LIQUID "--short-names" @-}
+{-@ LIQUID "--no-pattern-inline" @-}
+
+
 module RIO where
 
 import Control.Applicative
+import qualified Data.Set as Set
 
 {-@ data RIO a <p :: World -> Bool, q :: World -> a -> World -> Bool>
-      = RIO (rs :: (x:World<p> -> (a, World)<\w -> {v:World<q x w> | true}>))
+      = RIO (runState :: (x:World<p> -> IO (a, World)<\w -> {v:World<q x w> | true}>))
   @-}
-data RIO a  = RIO {runState :: World -> (a, World)}
+data RIO a  = RIO {runState :: World -> IO (a, World)}
 
-{-@ runState :: forall <p :: World -> Bool, q :: World -> a -> World -> Bool>.
-                RIO <p, q> a -> x:World<p> -> (a, World)<\w -> {v:World<q x w> | true}> @-}
+{-@ rState :: forall <p :: World -> Bool, q :: World -> a -> World -> Bool>.
+                RIO <p, q> a -> x:World<p> -> IO (a, World)<\w -> {v:World<q x w> | true}> @-}
+rState (RIO f)= f
 
-data World  = W
+data World = W { cnt :: Int, vs :: Set.Set Entry }
+{-@ data World = W { cnt :: Int, vs :: Set.Set Entry } @-}
 
+{-@ emptyWorld :: { w:World | cnt w = 0 && Set_emp (vs w)} @-}
+emptyWorld = W 0 Set.empty
+
+
+{-@ data Value = N Int @-}
+data Value = N Int deriving (Eq, Ord, Show)
+
+{-@ data Entry = E { eIdx :: Int, eVal :: Value } @-}
+data Entry = E { eIdx :: Int, eVal :: Value } deriving (Eq, Ord, Show)
 
 -- | RJ: Putting these in to get GHC 7.10 to not fuss
 instance Functor RIO where
@@ -49,14 +69,64 @@ instance Monad RIO where
       return :: forall <p :: World -> Bool>.
                 x:a -> RIO <p, \w0 y -> {w1:World | w0 == w1 && y == x}> a
   @-}
-  (RIO g) >>= f = RIO $ \x -> case g x of {(y, s) -> (runState (f y)) s}
-  (RIO g) >>  f = RIO $ \x -> case g x of {(y, s) -> (runState f    ) s}
-  return w      = RIO $ \x -> (w, x)
+  (RIO g) >>= f = RIO $ \x -> do
+    (v, w) <- g x
+    runState (f v) w
+  return w      = RIO $ \x -> return (w, x)
 
-{- qualif Papp4(v:a, x:b, y:c, z:d, p:Pred a b c d) : papp4(p, v, x, y, z)     @-}
+{-@ setV :: v:Value -> RIO <{\x -> true}, {\w1 b w2 -> (cnt w2 = (cnt w1 + 1)) && (vs w2) = Set_cup (Set_sng (E (cnt w2) v)) (vs w1) }> Value @-}
+setV :: Value -> RIO Value 
+setV v = RIO $ \w -> return ((v, setV' v w))
 
--- Test Cases:
--- * TestM (Basic)
--- * TwiceM
--- * IfM
--- * WhileM
+{-@ setV' :: v:Value -> w1:World -> { w2:World | (cnt w2 = (cnt w1 + 1)) && (vs w2) = Set_cup (Set_sng (E (cnt w2) v)) (vs w1)  } @-}
+setV' :: Value -> World -> World
+setV' v w = W (cnt w + 1) (Set.insert (E (cnt w + 1) v) (vs w))
+
+{-@ getV :: RIO <{\x -> true}, {\w1 b w2 -> (cnt w1 + 1) = cnt w2 && (vs w1) == (vs w2) }> () @-}
+getV :: RIO () 
+getV = RIO $ \(W c v) -> return ((), W (c + 1) v)
+
+{-@ testing :: RIO<{\x -> Set_emp (vs x) && (cnt x) = 0 }, {\w1 b w2 -> (vs w2) = Set_cup (Set_sng (E 4 (N 3))) (Set_sng (E 2 (N 1))) }> () @-}
+testing :: RIO ()
+testing = do
+  getV
+  setV (N 1)
+  getV
+  setV (N 3)
+  return ()
+
+{-@ getW :: RIO <{\x -> true}, {\w1 s w2 -> w1 == w2 && s == w1}>  World  @-}
+getW :: RIO World
+getW = RIO $ \w -> return ((w, w))
+
+{-@ getEntry :: { i:Int | i > 0 } -> RIO <{\x -> cnt x <= i }, {\w1 s w2 -> w1 == w2 && isJust(s) => Set_mem (fromJust s) (vs w1) }> (Maybe Entry) @-}
+getEntry :: Int -> RIO (Maybe Entry)
+getEntry i = do
+  w <- getW
+  return (findEntry (vs w) i)
+
+{-@ assume findEntry :: s:Set.Set Entry -> Int -> {e: Maybe Entry | (isJust(e)) => Set_mem (fromJust e) s } @-}
+findEntry :: Set.Set Entry -> Int -> Maybe Entry
+findEntry s i = byIdx (Set.elems s) i
+
+{-@ byIdx :: s:[Entry] -> Int -> {e: Maybe Entry | (isJust(e)) => Set_mem (fromJust e) (listElts s) } @-}
+byIdx :: [Entry] -> Int -> Maybe Entry
+byIdx ([]) _ = Nothing
+byIdx (x:xs) i = if (eIdx x) == i then Just(x) else (byIdx xs i)
+
+-- medio hacky, pero 
+
+-- {-@ assume lookup' :: w:World -> { i:Int | cnt w <= i && i > 0 } -> {e: Entry | eIdx e = i && Set_mem e (vs w) } @-}
+-- lookup' :: World -> Int -> Entry
+-- lookup' (W c v) i = case Set.lookupGE (E i (N 0)) v of
+--   Just a -> a
+--   Nothing -> unsafeError "unreachable"
+-- 
+-- {-@ ignore unsafeError @-}
+-- unsafeError = error
+-- 
+
+-- tlookup :: RIO (Maybe Entry)
+-- tlookup = do
+--   testing
+--   getEntry 2

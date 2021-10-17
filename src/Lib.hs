@@ -1,7 +1,7 @@
-{-@ LIQUID "--prune-unsorted" @-}
+-- {-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--ple" @-}
 {-@ LIQUID "--reflection" @-}
-{-@ LIQUID "--no-adt" @-}
+-- {-@ LIQUID "--no-adt" @-}
 
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -29,27 +29,29 @@ import Data.Functor ((<$>))
 import Control.Applicative ((<|>))
 import Data.Tuple (swap)
 import Control.Monad (void)
+import RIO (RIO (RIO), rState, World (cnt, vs, W), Value(N), emptyWorld, testing)
+import qualified Data.Set as Set
 
 mainFunc = do
-    print top
-    example0
-
-client0 s = do
-    s <- send 5 s
-    (y, s) <- recv s
-    close s
-
-{-@ type Odd = {i: Int | i mod 2 = 0 }@-}
-{-@ type Even = {i: Int | i mod 2 = 1 }@-}
-
-{-@ server0 :: (Recv Odd (Send Even End)) -> IO () @-}
-server0 :: (Recv Int (Send Int End)) -> IO ()
-server0 s = do
-    (x, s) <- recv s
-    s <- send (x + 1) s 
-    close s
-
-example0 = connect client0 server0
+    top
+--     example0
+-- 
+-- client0 s = do
+--     s <- send 5 s
+--     (y, s) <- recv s
+--     close s
+-- 
+-- {-@ type Odd = {i: Int | i mod 2 = 0 }@-}
+-- {-@ type Even = {i: Int | i mod 2 = 1 }@-}
+-- 
+-- {-@ server0 :: (Recv Odd (Send Even End)) -> RIO (IO ()) @-}
+-- server0 :: (Recv Int (Send Int End)) -> RIO (IO ())
+-- server0 s = do
+--     (x, s) <- recv s
+--     s <- send (x + 1) s 
+--     close s
+-- 
+-- example0 = connect client0 server0
 
 -- * Session types
 
@@ -87,21 +89,30 @@ instance Session () where
 
 -- * Communication primitives
 
-{-@ send :: Session s => v1:a -> Send {v2:a | v1 = v2 } s -> IO s @-}
-send :: Session s => a -> Send a s -> IO s
-send x (Send ch_s) = do
-  (here, there) <- newS
-  send' ch_s (x, there)
-  return here
+{-@ send :: Session s => v1:Value -> Send {v2:Value | v1 = v2 } s -> IO (RIO s) @-}
+send :: Session s => Value -> Send Value s -> IO (RIO s)
+-- send x (Send ch_s) = do
+--   (here, there) <- newS
+--   send' ch_s (x, there)
+--   return here
+send = undefined
 
-recv :: Recv a s -> IO (a, s)
-recv (Recv ch_r) = recv' ch_r
+recv :: Recv a s -> IO (RIO (a, s))
+-- recv (Recv ch_r) = do
+--   recv' ch_r
+recv = undefined
 
-close :: End -> IO ()
-close (End s) = sync s
+close :: End -> IO (RIO ())
+-- close (End s) = return $ sync s
+close = undefined
 
-connect :: (Session s) => (s -> IO ()) -> (Dual s -> IO a) -> IO a
-connect k1 k2 = do (s1, s2) <- newS; void (forkIO (k1 s1)); k2 s2
+connect :: (Session s) => (s -> IO (RIO ())) -> (Dual s -> IO (RIO a)) -> IO a
+-- connect k1 k2 = do 
+--   (s1, s2) <- newS
+--   void (forkIO (gi (k1 s1)))
+--   gi (k2 s2)
+--   where gi rio = let (v, _) = runState rio $ emptyWorld in v
+connect = undefined
 
 -- * One-shot channels
 
@@ -141,71 +152,32 @@ sync (SyncOnce ch_s ch_r) = do send' ch_s (); recv' ch_r
 
 -- * Contracts
 
-data Sop a c = Sop a c
-data Rop a c = Rop c
-data Nop = Nop
 
-class Op a b c | a -> b, a -> c where
-  value :: a -> Maybe b
-  continuation :: a -> Maybe c 
+-- mm = rState testing
 
-{-@ safeOr :: v1:Maybe a -> {v2: Maybe a | isJust v1 <=> not(isJust v2) } -> a @-}
-safeOr :: Maybe a -> Maybe a -> a
-safeOr (Just a) _ = a
-safeOr _ (Just a) = a
+top = do 
+  (_, w) <- (rState testing) emptyWorld
+  print $ vs w
 
-instance Op (Sop a c) a c where
-  value (Sop a _) = Just a
-  continuation (Sop _ c) = Just c
+-- top = print "hola"
 
-instance Op (Rop a c) a c where
-  value (Rop c) = Nothing
-  continuation (Rop c) = Just c
+-- top = let (_, w) = (runState testing) emptyWorld in fmap vs w
 
-instance Op Nop () () where
-  value Nop = Nothing
-  continuation Nop = Nothing
+--- newtype RIOT a = RIOT { runIOT :: World -> IO (RIO a) }
+--- 
+--- instance Monad RIOT where
+---   return :: a -> RIOT a
+---   return a = RIOT $ \w -> return . return
+---   x >>= f = RIOT $ do
+---     v <- runIOT x -- RIO a
+---     case runState v of
+---       (v, w) -> runIOT (f v)
 
-{-@ unwrap :: { v: Maybe a | isJust v } -> a @-}
-unwrap :: Maybe a -> a
-unwrap (Just a) = a
-unwrap _ = error "unreachable"
-
-class Comb a a' c | a -> c, a -> a' where
-  combine :: a -> a' -> c  
-
-instance (Comb c c' d) => Comb (Sop v c) (Rop v c') (Contract v d) where 
-  combine :: (Sop v c) -> (Rop v c') -> (Contract v d)
-  combine a a' = C (safeOr (value a) (value a')) (combine (cont a) (cont a'))
-    where 
-      cont = unwrap . continuation
-
-instance (Comb c c' d) => Comb (Rop v c) (Sop v c') (Contract v d) where 
-  -- combine (Rop c) (Sop a c')  = C a (combine c c')
-  combine = undefined
-
-instance Comb Nop Nop (Contract () ()) where
-  -- combine Nop Nop = N
-  combine = undefined
-
-{-@ data Contract a c <p :: a -> Bool, q :: a -> c -> Bool> = C { val :: a<p>, cont :: c<q val> } | N @-}
-data Contract a c = C { val :: a, cont :: c } | N deriving (Eq, Show)
-
-{-@ data variance Contract contravariant covariant @-}
-
-{-@ test :: Contract <{\x -> True}, {\x c -> x + 1 = (val c)}> Int (Contract Int (Contract () ())) @-}
-test :: Contract Int (Contract Int (Contract () ()))
-test = C 1 (C 2 N)
-
-{-@ test :: Contract <{\x -> x = 1}> Int (Contract () ()) -> () @-}
-test :: Contract Int (Contract () ()) -> ()
-test = combine (Sop (1 :: Int) Nop) ((Rop Nop) :: Rop Int _)
--- top = undefined
-
-
----
+--
 
 
 
 
----
+
+
+--
