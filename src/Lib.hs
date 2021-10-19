@@ -1,7 +1,9 @@
 -- {-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--ple" @-}
 {-@ LIQUID "--reflection" @-}
--- {-@ LIQUID "--no-adt" @-}
+{-@ LIQUID "--no-pattern-inline" @-}
+{-@ LIQUID "--prune-unsorted" @-}
+{-@ LIQUID "--no-adt" @-}
 
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -15,11 +17,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE DataKinds #-}
 
 module Lib where
 import Control.Concurrent (Chan, MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
@@ -29,33 +26,55 @@ import Data.Functor ((<$>))
 import Control.Applicative ((<|>))
 import Data.Tuple (swap)
 import Control.Monad (void)
-import RIO (RIO (RIO), rState, World (cnt, vs, W), Value(N), emptyWorld, testing)
+import RIO (RIO (RIO), rState, World (cnt, vs, W), Value(N), emptyWorld, testing, t1, liftRIO, setV, vmap, addV, vdom)
 import qualified Data.Set as Set
+import qualified Data.Set as Map
+import Data.Map (Map)
+{-@ embed  Map as Map_t @-}
 
 mainFunc = do
-    top
---     example0
+--    top
+--    top2
+    incrS
 -- 
--- client0 s = do
---     s <- send 5 s
---     (y, s) <- recv s
---     close s
--- 
--- {-@ type Odd = {i: Int | i mod 2 = 0 }@-}
--- {-@ type Even = {i: Int | i mod 2 = 1 }@-}
--- 
--- {-@ server0 :: (Recv Odd (Send Even End)) -> RIO (IO ()) @-}
--- server0 :: (Recv Int (Send Int End)) -> RIO (IO ())
--- server0 s = do
---     (x, s) <- recv s
---     s <- send (x + 1) s 
---     close s
--- 
--- example0 = connect client0 server0
+{-@ client :: (Send Value (Recv Value End)) -> RIO <{\w -> EmptyWorld w}> () @-}
+client :: (Send Value (Recv Value End)) -> RIO ()
+client s = do
+    s <- send (N 5) s
+    (y, s) <- recv (N 6) s
+    server_c
+    close s
+
+-- me gustaría poder retornar RIO Bool y escribir el refinement con código, pero
+-- no encuentro forma de hacerlo andar (o sea, en realidad no encuentro la forma
+-- de asserterarlo después). Pero supongo que se tiene que poder.
+-- o sea, vi cosas parecidas en los ejemplos.
+{-@ server_c :: RIO<
+      {\x -> 
+        cnt x = 2 && 
+        listElts(vdom (vs x)) = Set_cup (Set_sng 1) (Set_sng 2) &&
+        Map_select (vmap (vs x)) 2 = addV (N 1) (Map_select (vmap (vs x)) 1)
+        }, 
+      {\w1 x w2 -> w1 = w2}> 
+      ()
+  @-}
+server_c :: RIO ()
+server_c = return () 
+
+{-@ server :: (Recv Value (Send Value End)) -> RIO <{\w -> EmptyWorld w}> () @-}
+server :: (Recv Value (Send Value End)) -> RIO ()
+server s = do
+    (N x, s) <- recv (N 5) s
+    s <- send (N (x + 1)) s 
+    close s
+
+
+incrS = connect client server
 
 -- * Session types
 
 data Send a s = Send (SendOnce (a, Dual s))
+{-@ data Recv a s = Recv (RecvOnce (a, s)) @-}
 data Recv a s = Recv (RecvOnce (a, s))
 data End      = End SyncOnce
 
@@ -89,35 +108,40 @@ instance Session () where
 
 -- * Communication primitives
 
-{-@ send :: Session s => v1:Value -> Send {v2:Value | v1 = v2 } s -> IO (RIO s) @-}
-send :: Session s => Value -> Send Value s -> IO (RIO s)
--- send x (Send ch_s) = do
---   (here, there) <- newS
---   send' ch_s (x, there)
---   return here
-send = undefined
+-- este assume no debería hacer falta supongo, pero por ahora es más fácil
+{-@ assume send :: Session s => v1:Value -> Send {v2:Value | v1 = v2 } s -> RIO<{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 v1 w1 }> s @-}
+send :: Session s => Value -> Send Value s -> RIO s
+send x (Send ch_s) = do
+  (here, there) <- (liftRIO newS)
+  liftRIO $ send' ch_s (x, there)
+  return here
 
-recv :: Recv a s -> IO (RIO (a, s))
--- recv (Recv ch_r) = do
---   recv' ch_r
-recv = undefined
+{-@ assume recv :: g:Value -> Recv Value s -> RIO <{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 g w1 }> (Value, s) @-}
+recv :: Value -> Recv Value s -> RIO (Value, s)
+recv _ (Recv ch_r) = do
+  liftRIO $ recv' ch_r
 
-close :: End -> IO (RIO ())
--- close (End s) = return $ sync s
-close = undefined
+{-@ close :: End -> RIO <{\x -> true}, {\w1 b w2 -> w1 = w2}> () @-}
+close :: End -> RIO ()
+close (End s) = liftRIO $ sync s
 
-connect :: (Session s) => (s -> IO (RIO ())) -> (Dual s -> IO (RIO a)) -> IO a
--- connect k1 k2 = do 
---   (s1, s2) <- newS
---   void (forkIO (gi (k1 s1)))
---   gi (k2 s2)
---   where gi rio = let (v, _) = runState rio $ emptyWorld in v
-connect = undefined
+-- TODO: sacar este ignore
+{-@ ignore connect @-}
+{-@ connect :: (Session s) => (s -> RIO <{\w -> EmptyWorld w}> ()) -> (Dual s -> RIO <{\w -> EmptyWorld w}> a) -> IO a @-}
+connect :: (Session s) => (s -> RIO ()) -> (Dual s -> RIO a) -> IO a
+connect k1 k2 = do 
+  (s1, s2) <- newS
+  void (forkIO (gi (k1 s1)))
+  gi (k2 s2)
+  where gi rio = let io = rState rio $ emptyWorld in fmap fst io
 
 -- * One-shot channels
 
 data SendOnce a = SendOnce (MVar a)
 data RecvOnce a = RecvOnce (MVar a)
+
+{-@ data SendOnce a = SendOnce (MVar a) @-}
+{-@ data RecvOnce a = RecvOnce (MVar a) @-}
 
 {-@ data variance SendOnce covariant @-}
 {-@ data variance RecvOnce covariant @-}
@@ -141,6 +165,7 @@ recv' (RecvOnce mvar) = takeMVar mvar
 
 data SyncOnce = SyncOnce (SendOnce ()) (RecvOnce ())
 
+{-@ ignore newSync @-}
 newSync :: IO (SyncOnce, SyncOnce)
 newSync = do
   (ch_s1, ch_r1) <- new'
@@ -150,28 +175,15 @@ newSync = do
 sync :: SyncOnce -> IO ()
 sync (SyncOnce ch_s ch_r) = do send' ch_s (); recv' ch_r
 
--- * Contracts
-
-
--- mm = rState testing
+--- tests
 
 top = do 
   (_, w) <- (rState testing) emptyWorld
   print $ vs w
 
--- top = print "hola"
-
--- top = let (_, w) = (runState testing) emptyWorld in fmap vs w
-
---- newtype RIOT a = RIOT { runIOT :: World -> IO (RIO a) }
---- 
---- instance Monad RIOT where
----   return :: a -> RIOT a
----   return a = RIOT $ \w -> return . return
----   x >>= f = RIOT $ do
----     v <- runIOT x -- RIO a
----     case runState v of
----       (v, w) -> runIOT (f v)
+top2 = do
+  print t1
+  return ()
 
 --
 

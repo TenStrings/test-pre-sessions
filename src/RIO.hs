@@ -4,12 +4,15 @@
 {-@ LIQUID "--no-adt" @-}
 -- {-@ LIQUID "--short-names" @-}
 {-@ LIQUID "--no-pattern-inline" @-}
+{-@ LIQUID "--exact-data-cons" @-}
 
 
 module RIO where
 
 import Control.Applicative
 import qualified Data.Set as Set
+import qualified Data.Map as Map
+import Data.Map (Map)
 
 {-@ data RIO a <p :: World -> Bool, q :: World -> a -> World -> Bool>
       = RIO (runState :: (x:World<p> -> IO (a, World)<\w -> {v:World<q x w> | true}>))
@@ -20,18 +23,22 @@ data RIO a  = RIO {runState :: World -> IO (a, World)}
                 RIO <p, q> a -> x:World<p> -> IO (a, World)<\w -> {v:World<q x w> | true}> @-}
 rState (RIO f)= f
 
-data World = W { cnt :: Int, vs :: Set.Set Entry }
-{-@ data World = W { cnt :: Int, vs :: Set.Set Entry } @-}
+data World = W { cnt :: Int, vs :: Values }
+{-@ data World = W { cnt :: Int, vs :: Values } @-}
 
-{-@ emptyWorld :: { w:World | cnt w = 0 && Set_emp (vs w)} @-}
-emptyWorld = W 0 Set.empty
+{-@ liftRIO :: IO a -> RIO<{\w -> true}, {\w1 v w2 -> w1 == w2 }> a @-}
+liftRIO :: IO a -> RIO a
+liftRIO m = RIO $ \w -> (fmap (\v -> (v, w)) m)
 
+{-@ emptyWorld :: { w:World | cnt w = 0 && Set_emp (listElts (vdom (vs w))) && vdom (vs w) = [] } @-}
+emptyWorld = W 0 emptyD
 
 {-@ data Value = N Int @-}
 data Value = N Int deriving (Eq, Ord, Show)
 
-{-@ data Entry = E { eIdx :: Int, eVal :: Value } @-}
-data Entry = E { eIdx :: Int, eVal :: Value } deriving (Eq, Ord, Show)
+{-@ reflect addV @-}
+addV :: Value -> Value -> Value
+addV (N i) (N j) = N (i + j)
 
 -- | RJ: Putting these in to get GHC 7.10 to not fuss
 instance Functor RIO where
@@ -74,19 +81,37 @@ instance Monad RIO where
     runState (f v) w
   return w      = RIO $ \x -> return (w, x)
 
-{-@ setV :: v:Value -> RIO <{\x -> true}, {\w1 b w2 -> (cnt w2 = (cnt w1 + 1)) && (vs w2) = Set_cup (Set_sng (E (cnt w2) v)) (vs w1) }> Value @-}
+{-@ predicate IsPrev W = not (Set_mem (cnt W + 1) (listElts (vdom (vs W)))) @-}
+{-@ predicate IncreaseCnt A B = (cnt A) == (cnt B) + 1 @-}
+{-@ predicate AddCntToDomain W2 W1 = (listElts (vdom (vs W2))) = Set_cup (Set_sng (cnt W2)) (listElts (vdom (vs W1))) @-}
+{-@ predicate UpdateDomain W2 W1 = IncreaseCnt W2 W1 && AddCntToDomain W2 W1 @-}
+{-@ predicate AddValueIndex W2 V W1 = (vmap (vs W2)) = Map_store (vmap (vs W1)) (cnt W2) V @-}
+{-@ predicate EmptyWorld W = (vdom (vs W)) = [] && (cnt W) = 0 @-}
+
+-- TODO: setV y setV' tienen el mismo predicado, extraerlo
+{-@ setV :: v:Value -> RIO <{\w -> IsPrev w }, {\w1 b w2 -> 
+      UpdateDomain w2 w1 &&
+      AddValueIndex w2 v w1
+      }> Value @-}
 setV :: Value -> RIO Value 
 setV v = RIO $ \w -> return ((v, setV' v w))
 
-{-@ setV' :: v:Value -> w1:World -> { w2:World | (cnt w2 = (cnt w1 + 1)) && (vs w2) = Set_cup (Set_sng (E (cnt w2) v)) (vs w1)  } @-}
+{-@ setV' :: v:Value -> {w1:World | IsPrev w1 } -> { w2:World | 
+      UpdateDomain w2 w1 &&
+      AddValueIndex w2 v w1
+      } @-}
 setV' :: Value -> World -> World
-setV' v w = W (cnt w + 1) (Set.insert (E (cnt w + 1) v) (vs w))
+setV' v w = W (cnt w + 1) (setD (cnt w + 1) v (vs w))
 
-{-@ getV :: RIO <{\x -> true}, {\w1 b w2 -> (cnt w1 + 1) = cnt w2 && (vs w1) == (vs w2) }> () @-}
+{-@ getV :: RIO <{\x -> IsPrev x }, {\w1 b w2 -> IncreaseCnt w2 w1 && (vs w1) == (vs w2) }> () @-}
 getV :: RIO () 
 getV = RIO $ \(W c v) -> return ((), W (c + 1) v)
 
-{-@ testing :: RIO<{\x -> Set_emp (vs x) && (cnt x) = 0 }, {\w1 b w2 -> (vs w2) = Set_cup (Set_sng (E 4 (N 3))) (Set_sng (E 2 (N 1))) }> () @-}
+{-@ testing :: RIO<{\x -> (vdom (vs x)) = [] && (cnt x) = 0 }, {\w1 b w2 -> 
+      (listElts (vdom (vs w2))) = Set_cup (Set_sng 4) (Set_sng 2) && 
+      Map_select (vmap (vs w2)) 4 = addV (Map_select (vmap (vs w2)) 2) (N 2)
+      }> ()  
+      @-}
 testing :: RIO ()
 testing = do
   getV
@@ -95,38 +120,83 @@ testing = do
   setV (N 3)
   return ()
 
-{-@ getW :: RIO <{\x -> true}, {\w1 s w2 -> w1 == w2 && s == w1}>  World  @-}
-getW :: RIO World
-getW = RIO $ \w -> return ((w, w))
+{-
+  diccionario (mayormente) no chequeado
+  la implementación tiene assume para las propiedades, porque
 
-{-@ getEntry :: { i:Int | i > 0 } -> RIO <{\x -> cnt x <= i }, {\w1 s w2 -> w1 == w2 && isJust(s) => Set_mem (fromJust s) (vs w1) }> (Maybe Entry) @-}
-getEntry :: Int -> RIO (Maybe Entry)
-getEntry i = do
-  w <- getW
-  return (findEntry (vs w) i)
+  a) no es lo que me importa realmente para esto 
+  
+  b) no estoy seguro de que se pueda escribir sin tener que reimplementar los
+  mapas de alguna forma 
+  
+  c) todavía no estoy del todo seguro de cual es la semántica de Map_select si
+  no hay nada insertado, o sea, podría usar Maybe, pero es medio molesto.
 
-{-@ assume findEntry :: s:Set.Set Entry -> Int -> {e: Maybe Entry | (isJust(e)) => Set_mem (fromJust e) s } @-}
-findEntry :: Set.Set Entry -> Int -> Maybe Entry
-findEntry s i = byIdx (Set.elems s) i
+  d) a fin de cuentas la implementación no importa porque no se va a usar el
+  valor, podría ser simplemente Nops, lo único que me importa es tener los
+  refinements. Supongo que se podrían escribir puramente en términos de measures
+  abstractas, pero no probé mucho eso, y tener una implementación es lindo para
+  print-debuggear
+-}
+{-@ embed Map as Map_t @-}
 
-{-@ byIdx :: s:[Entry] -> Int -> {e: Maybe Entry | (isJust(e)) => Set_mem (fromJust e) (listElts s) } @-}
-byIdx :: [Entry] -> Int -> Maybe Entry
-byIdx ([]) _ = Nothing
-byIdx (x:xs) i = if (eIdx x) == i then Just(x) else (byIdx xs i)
+{-@ measure Map_union   :: Map k v -> Map k v -> Map k v @-}
+{-@ measure Map_select  :: Map Int v -> Int -> Value     @-}
+{-@ measure Map_store   :: Map k v -> k -> v -> Map k v @-}
 
--- medio hacky, pero 
+data Values = V { vdom :: [Int], vmap :: Map.Map Int Value } deriving Show
+{-@ data Values = V { vdom :: [Int], vmap :: Map Int Value } @-}
 
--- {-@ assume lookup' :: w:World -> { i:Int | cnt w <= i && i > 0 } -> {e: Entry | eIdx e = i && Set_mem e (vs w) } @-}
--- lookup' :: World -> Int -> Entry
--- lookup' (W c v) i = case Set.lookupGE (E i (N 0)) v of
---   Just a -> a
---   Nothing -> unsafeError "unreachable"
+{-@ assume getD :: k:Int -> {vs:Values | Set_mem k (listElts (vdom vs))} -> {v:Value | v = Map_select (vmap vs) k} @-}
+getD :: Int -> Values -> Value 
+getD k d = case (Map.lookup k (vmap d)) of 
+  Just v -> v
+  Nothing -> unreachableUnchecked
+
+{-@ ignore unreachableUnchecked @-}
+unreachableUnchecked = error "unreachable"
+
+{-@ assume setD :: k:Int -> v:Value -> {vs:Values | not (Set_mem k (listElts (vdom vs)))} -> { r:Values | 
+      (vmap r) = Map_store (vmap vs) k v && 
+      (listElts (vdom r)) = Set_cup (Set_sng k) (listElts (vdom vs)) } @-}
+setD :: Int -> Value -> Values -> Values
+setD k v vs = V (k : (vdom vs)) (Map.insert k v (vmap vs)) 
+
+{-@ assume emptyD :: { v:Values | Set_emp (listElts (vdom v)) && vdom v = [] } @-}
+emptyD :: Values
+emptyD = V [] (Map.empty)
+
+{-@ t1 :: {s:Value | s = (N 3) } @-}
+t1 :: Value
+t1 = getD 3 $ setD 1 (N 1) $ setD 3 (N 3) emptyD
+-- t1 = getD 1 $ setD 1 (N 1) $ setD 3 (N 3) emptyD -- unsafe
+-- t1 = getD 1 emptyD -- unsafe
+
+----
+
+-- espacio en blanco porque a veces no puedo leer la última línea cuando abro el html
+
+
+
+
+
+
+----
+
+
+-- intentos de escribir un contrato con una monada, pero no logro hacer que el assert funcione 
+
+-- {-@ getW :: RIO <{\x -> true}, {\w1 s w2 -> w1 == w2 && s == w1}>  World  @-}
+-- getW :: RIO World
+-- getW = RIO $ \w -> return ((w, w))
 -- 
--- {-@ ignore unsafeError @-}
--- unsafeError = error
+-- {-@ getEntry :: { i:Int | i > 0 } -> RIO <{\x -> cnt x >= i && Set_mem i (listElts (vdom (vs x))) }, 
+--       {\w1 s w2 -> w1 == w2 && s = Map_select (vmap (vs w1)) i }> Value @-}
+-- getEntry :: Int -> RIO (Value)
+-- getEntry i = do
+--   w <- getW
+--   return (getD i (vs w))
 -- 
-
--- tlookup :: RIO (Maybe Entry)
--- tlookup = do
---   testing
---   getEntry 2
+-- {-@ rioAssert :: {v:Bool | v} -> RIO<{\w -> true}, {\w1 x w2 -> w1 = w2}> () @-}
+-- rioAssert :: Bool -> RIO ()
+-- rioAssert i = (return ())
