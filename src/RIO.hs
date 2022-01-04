@@ -33,17 +33,14 @@ liftRIO m = RIO $ \w -> (fmap (\v -> (v, w)) m)
 {-@ emptyWorld :: { w:World | cnt w = 0 && Set_emp (listElts (vdom (vs w))) && vdom (vs w) = [] } @-}
 emptyWorld = W 0 emptyD
 
-{-@ data Value = N Int @-}
-data Value = N Int deriving (Eq, Ord, Show)
-
-{-@ measure getN @-}
-{-@ getN :: {v:Value | isN v} -> Int @-}
-getN :: Value -> Int
-getN (N i) = i
-
-{-@ measure isN @-}
-isN :: Value -> Bool
-isN (N _) = True
+-- {-@ measure getN @-}
+-- {-@ getN :: {v:Value | isN v} -> Int @-}
+-- getN :: Value -> Int
+-- getN (N i) = i
+-- 
+-- {-@ measure isN @-}
+-- isN :: Value -> Bool
+-- isN (N _) = True
 
 -- | RJ: Putting these in to get GHC 7.10 to not fuss
 instance Functor RIO where
@@ -96,36 +93,36 @@ instance Monad RIO where
 {-@ predicate Pure W1 W2 = W1 == W2 @-}
 
 -- TODO: setV y setV' tienen el mismo predicado, extraerlo
-{-@ setV :: v:Value -> RIO <{\w -> IsPrev w }, {\w1 b w2 -> 
+{-@ setV :: v:Int -> RIO <{\w -> IsPrev w }, {\w1 b w2 -> 
       UpdateDomain w2 w1 &&
       AddValueIndex w2 v w1
-      }> Value @-}
-setV :: Value -> RIO Value 
+      }> Int @-}
+setV :: Int -> RIO Int 
 setV v = RIO $ \w -> return ((v, setV' v w))
 
-{-@ setV' :: v:Value -> {w1:World | IsPrev w1 } -> { w2:World | 
+{-@ setV' :: v:Int -> {w1:World | IsPrev w1 } -> { w2:World | 
       UpdateDomain w2 w1 &&
       AddValueIndex w2 v w1
       } @-}
-setV' :: Value -> World -> World
+setV' :: Int -> World -> World
 setV' v w = W (cnt w + 1) (setD (cnt w + 1) v (vs w))
 
 {-@ getV :: RIO <{\x -> IsPrev x }, {\w1 b w2 -> IncreaseCnt w2 w1 && (vs w1) == (vs w2) }> () @-}
 getV :: RIO () 
 getV = RIO $ \(W c v) -> return ((), W (c + 1) v)
 
-{-@ testing :: RIO<{\x -> (vdom (vs x)) = [] && (cnt x) = 0 }, {\w1 b w2 -> 
-      (listElts (vdom (vs w2))) = Set_cup (Set_sng 4) (Set_sng 2) && 
-      getN (Map_select (vmap (vs w2)) 4) = getN (Map_select (vmap (vs w2)) 2) + 2
-      }> ()  
-      @-}
-testing :: RIO ()
-testing = do
-  getV
-  setV (N 1)
-  getV
-  setV (N 3)
-  return ()
+-- {-@ testing :: RIO<{\x -> (vdom (vs x)) = [] && (cnt x) = 0 }, {\w1 b w2 -> 
+--       (listElts (vdom (vs w2))) = Set_cup (Set_sng 4) (Set_sng 2) && 
+--       fromN (Map_select (vmap (vs w2)) 4) = fromN (Map_select (vmap (vs w2)) 2) + 2
+--       }> ()  
+--       @-}
+-- testing :: RIO ()
+-- testing = do
+--   getV
+--   setV (N 1)
+--   getV
+--   setV (N 3)
+--   return ()
 
 {-
   diccionario (mayormente) no chequeado
@@ -148,20 +145,20 @@ testing = do
 {-@ embed Map as Map_t @-}
 
 {-@ measure Map_union   :: Map k v -> Map k v -> Map k v @-}
-{-@ measure Map_select  :: Map Int v -> Int -> Value     @-}
+{-@ measure Map_select  :: Map Int v -> Int -> Int     @-}
 {-@ measure Map_store   :: Map k v -> k -> v -> Map k v @-}
 
-data Values = V { vdom :: [Int], vmap :: Map.Map Int Value } deriving Show
-{-@ data Values = V { vdom :: [Int], vmap :: Map Int Value } @-}
+data Values = V { vdom :: [Int], vmap :: Map.Map Int Int } deriving Show
+{-@ data Values = V { vdom :: [Int], vmap :: Map Int Int } @-}
 
-{-@ assume getD :: k:Int -> {vs:Values | Set_mem k (listElts (vdom vs))} -> {v:Value | v = Map_select (vmap vs) k} @-}
-getD :: Int -> Values -> Value 
+{-@ assume getD :: k:Int -> {vs:Values | Set_mem k (listElts (vdom vs))} -> {v:Int | v = Map_select (vmap vs) k} @-}
+getD :: Int -> Values -> Int 
 getD k d = case (Map.lookup k (vmap d)) of 
   Just v -> v
   Nothing -> unreachableUnchecked
 
-{-@ assume getD2 :: k:Int -> vs:Values -> {v:Value | v = Map_select (vmap vs) k} @-}
-getD2 :: Int -> Values -> Value 
+{-@ assume getD2 :: k:Int -> vs:Values -> {v:Int | v = Map_select (vmap vs) k} @-}
+getD2 :: Int -> Values -> Int 
 getD2 k d = case (Map.lookup k (vmap d)) of 
   Just v -> v
   Nothing -> unreachableUnchecked
@@ -169,19 +166,19 @@ getD2 k d = case (Map.lookup k (vmap d)) of
 {-@ ignore unreachableUnchecked @-}
 unreachableUnchecked = error "unreachable"
 
-{-@ assume setD :: k:Int -> v:Value -> {vs:Values | not (Set_mem k (listElts (vdom vs)))} -> { r:Values | 
+{-@ assume setD :: k:Int -> v:Int -> {vs:Values | not (Set_mem k (listElts (vdom vs)))} -> { r:Values | 
       (vmap r) = Map_store (vmap vs) k v && 
       (listElts (vdom r)) = Set_cup (Set_sng k) (listElts (vdom vs)) } @-}
-setD :: Int -> Value -> Values -> Values
+setD :: Int -> Int -> Values -> Values
 setD k v vs = V (k : (vdom vs)) (Map.insert k v (vmap vs)) 
 
 {-@ assume emptyD :: { v:Values | Set_emp (listElts (vdom v)) && vdom v = [] } @-}
 emptyD :: Values
 emptyD = V [] (Map.empty)
 
-{-@ t1 :: {s:Value | s = (N 3) } @-}
-t1 :: Value
-t1 = getD 3 $ setD 1 (N 1) $ setD 3 (N 3) emptyD
+{-@ t1 :: {s:Int | s = 3 } @-}
+t1 :: Int
+t1 = getD 3 $ setD 1 1 $ setD 3 3 emptyD
 -- t1 = getD 1 $ setD 1 (N 1) $ setD 3 (N 3) emptyD -- unsafe
 -- t1 = getD 1 emptyD -- unsafe
 
@@ -194,15 +191,15 @@ getW :: RIO World
 getW = RIO $ \w -> return ((w, w))
 
 {-@ getEntry :: { i:Int | i > 0 } -> RIO <{\x -> Set_mem i (listElts (vdom (vs x))) }, 
-      {\w1 s w2 -> Pure w1 w2 && s = Map_select (vmap (vs w1)) i }> Value @-}
-getEntry :: Int -> RIO (Value)
+      {\w1 s w2 -> Pure w1 w2 && s = Map_select (vmap (vs w1)) i }> Int @-}
+getEntry :: Int -> RIO Int
 getEntry i = do
   w <- getW
   return (getD i (vs w))
 
 {-@ assume getEntry2 :: { i:Int | i > 0 } -> RIO <{\x -> true }, 
-      {\w1 s w2 -> Pure w1 w2 && s = Map_select (vmap (vs w1)) i }> Value @-}
-getEntry2 :: Int -> RIO (Value)
+      {\w1 s w2 -> Pure w1 w2 && s = Map_select (vmap (vs w1)) i }> Int @-}
+getEntry2 :: Int -> RIO Int
 getEntry2 i = do
   w <- getW
   return (getD2 i (vs w))

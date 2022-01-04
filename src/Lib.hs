@@ -26,7 +26,7 @@ import Data.Functor ((<$>))
 import Control.Applicative ((<|>))
 import Data.Tuple (swap)
 import Control.Monad (void)
-import RIO (RIO (RIO), rState, World (cnt, vs, W), Value(N), emptyWorld, testing, t1, liftRIO, setV, vmap, vdom, getEntry, rioAssert, getN, getEntry2)
+import RIO (RIO (RIO), rState, World (cnt, vs, W), emptyWorld, t1, liftRIO, setV, vmap, vdom, getEntry, rioAssert, getEntry2)
 import qualified Data.Set as Set
 import qualified Data.Set as Map
 import Data.Map (Map)
@@ -37,19 +37,20 @@ mainFunc = do
 --    top2
     incrS
 -- 
-{-@ client :: (Send Value (Recv Value End)) -> RIO <{\w -> EmptyWorld w}> () @-}
-client :: (Send Value (Recv Value End)) -> RIO ()
+{-@ client :: (Send Int (Recv Int End)) -> RIO <{\w -> EmptyWorld w}> () @-}
+client :: (Send Int (Recv Int End)) -> RIO ()
 client s = do
-    s <- send (N 5) s
-    (y, s) <- recv (N 6) s
+    s <- send 5 s
+    (y, s) <- recv 6 s
 
     -- esto anda
-    --- (N x) <- getEntry 1
-    --- (N y) <- getEntry 2
-    --- rioAssert $ y == x + 1
+    x <- getEntry 1
+    y <- getEntry 2
+    rioAssert $ y == x + 1
+    rioAssert $ y == 6
 
-    -- pero esto solo anda con precondiciones bastante fuertes
-    -- supongo que porque al extraer la función la inferencia 
+    -- pero esto solo anda con precondiciones bastante fuertes supongo que
+    -- porque al extraer la función la inferencia  cambia
     -- c <- server_c1
     -- rioAssert c
 
@@ -61,32 +62,29 @@ client s = do
 
 {-@ server_c1 :: RIO<{\w -> Set_mem 1 (listElts(vdom (vs w))) && Set_mem 2 (listElts(vdom (vs w))) }, 
       {\w1 x w2 -> Pure w1 w2 && 
-      x <=> (getN (Map_select (vmap (vs w1)) 2) = getN (Map_select (vmap (vs w1)) 1) + 1)}>
+      x <=> Map_select (vmap (vs w1)) 2 = (Map_select (vmap (vs w1)) 1) + 1}>
       Bool @-}
 server_c1 :: RIO Bool 
 server_c1 = do
   x <- getEntry 1
   y <- getEntry 2
-  return $ (getN y) == (getN x) + 1 
-
-server_c2 = do
-  liftRIO $ print "hello world"
-  (N x) <- getEntry2 1
-  liftRIO $ print "failed to get first item?"
-  liftRIO $ print x
-  -- (N y) <- getEntry2 2
-  -- liftRIO $ print y
-  -- return (y == x + 1)
-  return (x == 5)
+  return $ y == x + 1 
 
 
-{-@ server :: (Recv Value (Send Value End)) -> RIO <{\w -> EmptyWorld w}> () @-}
-server :: (Recv Value (Send Value End)) -> RIO ()
+{-@ server :: (Recv Int (Send Int End)) -> RIO <{\w -> EmptyWorld w}> () @-}
+server :: (Recv Int (Send Int End)) -> RIO ()
 server s = do
-    (N x, s) <- recv (N 5) s
-    s <- send (N (x + 1)) s 
-    close s
+    (x, s) <- recv 5 s
+    -- esto no debería hacer falta, creo que no le gusta el destructuring?
+    -- no sé, igual por ahora lo puedo dejar así supongo
+    -- o sea, no debería hacer falta shadowear x así
+    x <- getEntry 1
+    s <- send (x + 1) s 
 
+    y <- getEntry 2
+    rioAssert $ y == x + 1
+
+    close s
 
 incrS = connect client server
 
@@ -127,22 +125,19 @@ instance Session () where
 
 -- * Communication primitives
 
-{-@ send :: Session s => v1:Value -> Send {v2:Value | v1 = v2 } s -> RIO<{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 v1 w1 }> s @-}
-send :: Session s => Value -> Send Value s -> RIO s
+{-@ send :: Session s => v1:Int -> Send {v2:Int | v1 = v2 } s -> RIO<{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 v1 w1 }> s @-}
+send :: Session s => Int -> Send Int s -> RIO s
 send x (Send ch_s) = do
   setV x -- add value to the environment
   (here, there) <- (liftRIO newS)
   liftRIO $ send' ch_s (x, there)
   return here
 
-{-@ assume recv :: g:Value -> Recv Value s -> RIO <{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 g w1 }> ({v:Value | v = g}, s) @-}
-recv :: Value -> Recv Value s -> RIO (Value, s)
+{-@ assume recv :: g:Int -> Recv Int s -> RIO <{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 g w1 }> ({v:Int | v = g}, s) @-}
+recv :: Int -> Recv Int s -> RIO (Int, s)
 recv v (Recv ch_r) = do
+  -- setV v -- add value to the environment
   liftRIO $ recv' ch_r
-
-{-@ assume recvAssume :: v:Value -> RecvOnce (Value, s) -> RIO ({x:Value | x == v}, s) @-}
-recvAssume :: Value -> RecvOnce (Value, s) -> RIO (Value,s )
-recvAssume _ = liftRIO . recv'
 
 {-@ close :: End -> RIO <{\x -> true}, {\w1 b w2 -> w1 = w2}> () @-}
 close :: End -> RIO ()
@@ -200,9 +195,9 @@ sync (SyncOnce ch_s ch_r) = do send' ch_s (); recv' ch_r
 
 --- tests
 
-top = do 
-  (_, w) <- (rState testing) emptyWorld
-  print $ vs w
+-- top = do 
+--   (_, w) <- (rState testing) emptyWorld
+--   print $ vs w
 
 top2 = do
   print t1
