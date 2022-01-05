@@ -41,11 +41,11 @@ mainFunc = do
 client :: (Send Int (Recv Int End)) -> RIO ()
 client s = do
     s <- send 5 s
-    (y, s) <- recv 6 s
+    expect 6
+    (y, s) <- recv s
 
     -- esto anda
     x <- getEntry 1
-    y <- getEntry 2
     rioAssert $ y == x + 1
     rioAssert $ y == 6
 
@@ -74,17 +74,18 @@ server_c1 = do
 {-@ server :: (Recv Int (Send Int End)) -> RIO <{\w -> EmptyWorld w}> () @-}
 server :: (Recv Int (Send Int End)) -> RIO ()
 server s = do
-    (x, s) <- recv 5 s
-    -- esto no debería hacer falta, creo que no le gusta el destructuring?
-    -- no sé, igual por ahora lo puedo dejar así supongo
-    -- o sea, no debería hacer falta shadowear x así
-    x <- getEntry 1
+    expect anyInt
+    (x, s) <- recv s
     s <- send (x + 1) s 
 
     y <- getEntry 2
     rioAssert $ y == x + 1
 
     close s
+
+{-@ assume anyInt :: Int @-}
+anyInt :: Int
+anyInt = undefined
 
 incrS = connect client server
 
@@ -133,10 +134,15 @@ send x (Send ch_s) = do
   liftRIO $ send' ch_s (x, there)
   return here
 
-{-@ assume recv :: g:Int -> Recv Int s -> RIO <{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 g w1 }> ({v:Int | v = g}, s) @-}
-recv :: Int -> Recv Int s -> RIO (Int, s)
-recv v (Recv ch_r) = do
-  -- setV v -- add value to the environment
+{-@ expect :: g:Int -> RIO <{\w1 -> IsPrev w1}, {\w1 b w2 -> UpdateDomain w2 w1 && AddValueIndex w2 g w1 }> () @-}
+expect :: Int -> RIO ()
+expect v = do 
+  setV v
+  return ()
+
+{-@ assume recv :: Recv Int s -> RIO <{\w1 -> cnt w1 >= 1}, {\w1 b w2 -> w1 = w2 && (fst b) = Map_select (vmap (vs w1)) (cnt w1) }> (Int, s) @-}
+recv :: Recv Int s -> RIO (Int, s)
+recv (Recv ch_r) = do
   liftRIO $ recv' ch_r
 
 {-@ close :: End -> RIO <{\x -> true}, {\w1 b w2 -> w1 = w2}> () @-}
