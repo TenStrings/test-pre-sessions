@@ -33,8 +33,6 @@ import Data.Map (Map)
 {-@ embed  Map as Map_t @-}
 
 mainFunc = do
---    top
---    top2
     incrS
 -- 
 {-@ client :: (Send Int (Recv Int End)) -> RIO <{\w -> EmptyWorld w}> () @-}
@@ -85,7 +83,7 @@ server s = do
 
 {-@ assume anyInt :: Int @-}
 anyInt :: Int
-anyInt = undefined
+anyInt = 5
 
 incrS = connect client server
 
