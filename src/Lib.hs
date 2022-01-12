@@ -147,8 +147,6 @@ recv (Recv ch_r) = do
 close :: End -> RIO ()
 close (End s) = liftRIO $ sync s
 
--- TODO: sacar este ignore
-{-@ ignore connect @-}
 {-@ connect :: (Session s) => (s -> RIO <{\w -> EmptyWorld w}> ()) -> (Dual s -> RIO <{\w -> EmptyWorld w}> a) -> IO a @-}
 connect :: (Session s) => (s -> RIO ()) -> (Dual s -> RIO a) -> IO a
 connect k1 k2 = do 
