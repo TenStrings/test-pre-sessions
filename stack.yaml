@@ -2,21 +2,27 @@ packages:
   - .
 
 extra-deps:
-#  - liquidhaskell-0.8.10.2
-#  - liquid-base-4.14.1.0
-#  - liquid-containers-0.6.2.1
-#  - liquid-ghc-prim-0.6.1
   - Diff-0.3.4
-  - git: https://github.com/ucsd-progsys/liquidhaskell
-    commit: d9155afac5e4c477c1555f855cf26af4ae018006 
+  # - git: https://github.com/ucsd-progsys/liquidhaskell
+  - git: https://github.com/TenStrings/liquidhaskell
+    commit: f9a616a42dc33bc0c116c1d57857e217568543b8  
     subdirs:
       - .
       - liquid-base
       - liquid-ghc-prim
       - liquid-containers
       - liquid-prelude
+  # - liquid-fixpoint-0.8.10.7@sha256:dee303753cf1adc8b071aa314179e26e784f3832d17b8317b114a0ac07818800,7980
   - git: https://github.com/ucsd-progsys/liquid-fixpoint
-    commit: ec3ef7993a5b2f3155a583fec5d13dd8ce3385c9
+    commit: 82d784dc2854ee962f77259a9bc4b5f0cee60645
+  # - git: https://github.com/zgrannan/rest.git 
+  #   commit: 14797650060afb9bc590fdec0191a3f88dedb48b
+  - hashable-1.3.0.0@sha256:d60cad00223d46172020c136e68acef0481a47d0302b2e74b1805b4f3a446a9b,5389
+  - rest-rewrite-0.1.1@sha256:eb7a6bc86dec6cb22c4af24d0dcf25ce4dac70f467d44a4e7901ac53d3c3ff5b,4983
+  # - basement-0.0.12@sha256:2974d0e1d6905f0daf1d3a92a933b5b6d0bf0951617f768194787dd4669c112e,5487
+ 
+resolver: nightly-2022-01-06
+# compiler: ghc-9.0.1
+compiler: ghc-8.10.7
 
-resolver: nightly-2021-06-01
 allow-newer: true

@@ -1,4 +1,5 @@
--- {-@ LIQUID "--prune-unsorted" @-}
+-- {-# LANGUAGE LinearTypes #-}
+{-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--ple" @-}
 {-@ LIQUID "--reflection" @-}
 {-@ LIQUID "--no-pattern-inline" @-}
@@ -89,6 +90,7 @@ incrS = connect client server
 
 -- * Session types
 
+{-@ data Send a s = Send (SendOnce (a, Dual s)) @-}
 data Send a s = Send (SendOnce (a, Dual s))
 {-@ data Recv a s = Recv (RecvOnce (a, s)) @-}
 data Recv a s = Recv (RecvOnce (a, s))
