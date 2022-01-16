@@ -1,10 +1,10 @@
--- {-# LANGUAGE LinearTypes #-}
 {-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--ple" @-}
 {-@ LIQUID "--reflection" @-}
 {-@ LIQUID "--no-pattern-inline" @-}
 {-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--no-adt" @-}
+{-@ LIQUID "--exact-data-cons" @-}
 
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -18,6 +18,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE LinearTypes #-}
 
 module Lib where
 import Control.Concurrent (Chan, MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
@@ -27,15 +28,16 @@ import Data.Functor ((<$>))
 import Control.Applicative ((<|>))
 import Data.Tuple (swap)
 import Control.Monad (void)
-import RIO (RIO (RIO), rState, World (cnt, vs, W), emptyWorld, t1, liftRIO, setV, vmap, vdom, getEntry, rioAssert, getEntry2)
+import RIO (RIO (RIO), rState, World (cnt, vs, W), emptyWorld, liftRIO, setV, vmap, vdom, getEntry, rioAssert, getEntry2)
 import qualified Data.Set as Set
 import qualified Data.Set as Map
 import Data.Map (Map)
 {-@ embed  Map as Map_t @-}
 
 mainFunc = do
+    putStrLn "hello world"
     incrS
--- 
+
 {-@ client :: (Send Int (Recv Int End)) -> RIO <{\w -> EmptyWorld w}> () @-}
 client :: (Send Int (Recv Int End)) -> RIO ()
 client s = do
@@ -183,7 +185,7 @@ send' (SendOnce mvar) = putMVar mvar
 recv' :: RecvOnce a -> IO a
 recv' (RecvOnce mvar) = takeMVar mvar
 
--- * Synchronisation construct
+-- -- * Synchronisation construct
 
 data SyncOnce = SyncOnce (SendOnce ()) (RecvOnce ())
 
@@ -202,16 +204,12 @@ sync (SyncOnce ch_s ch_r) = do send' ch_s (); recv' ch_r
 -- top = do 
 --   (_, w) <- (rState testing) emptyWorld
 --   print $ vs w
-
-top2 = do
-  print t1
-  return ()
-
 --
-
-
-
-
-
-
---
+-- 
+-- 
+-- 
+-- 
+-- 
+-- 
+-- --
+-- 

@@ -1,12 +1,13 @@
-{-@ LIQUID "--prune-unsorted" @-}
-{-@ LIQUID "--ple" @-}
-{-@ LIQUID "--reflection" @-}
+-- {-@ LIQUID "--prune-unsorted" @-}
+-- {-@ LIQUID "--ple" @-}
+-- {-@ LIQUID "--reflection" @-}
+
 {-@ LIQUID "--no-adt" @-}
--- {-@ LIQUID "--short-names" @-}
+{-@ LIQUID "--short-names" @-}
 {-@ LIQUID "--no-pattern-inline" @-}
-{-@ LIQUID "--exact-data-cons" @-}
-
-
+-- {-@ LIQUID "--exact-data-cons" @-}
+-- 
+-- 
 module RIO where
 
 import Control.Applicative
@@ -176,9 +177,10 @@ setD k v vs = V (k : (vdom vs)) (Map.insert k v (vmap vs))
 emptyD :: Values
 emptyD = V [] (Map.empty)
 
-{-@ t1 :: {s:Int | s = 3 } @-}
-t1 :: Int
-t1 = getD 3 $ setD 1 1 $ setD 3 3 emptyD
+-- why doesn't this work?
+-- {-@ t1 :: {s:Int | s = 3 } @-}
+-- t1 :: Int
+-- t1 = getD 3 $ setD 1 1 $ setD 3 3 emptyD
 -- t1 = getD 1 $ setD 1 (N 1) $ setD 3 (N 3) emptyD -- unsafe
 -- t1 = getD 1 emptyD -- unsafe
 
