@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 3b2650568ae5400eeee64d3c062c7273c2cecac51f8276d5d63cb4b43833c874
+-- hash: 7a411089234e3e3b616a6a0e958c349f7d5f9ce41ba886dbd017c9110c24da3e
 
 name:           main
 version:        0.1.0.0
@@ -35,7 +35,8 @@ library
       src
   ghc-options: -fplugin=LiquidHaskell
   build-depends:
-      liquid-base
+      linear-base
+    , liquid-base
     , liquid-containers
     , liquidhaskell
     , stm
@@ -49,7 +50,8 @@ executable main-exe
       app
   ghc-options: -fplugin=LiquidHaskell -rtsopts -with-rtsopts=-N -threaded -fplugin=LiquidHaskell
   build-depends:
-      liquid-base
+      linear-base
+    , liquid-base
     , liquid-containers
     , liquidhaskell
     , main

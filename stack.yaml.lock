@@ -101,6 +101,13 @@ packages:
       sha256: 6d3eb8c3dbecf65e82db3bc1b4e3ed1a2d5884b7db1b42ba0a30036cdc7533ed
   original:
     hackage: rest-rewrite-0.1.1@sha256:eb7a6bc86dec6cb22c4af24d0dcf25ce4dac70f467d44a4e7901ac53d3c3ff5b,4983
+- completed:
+    hackage: linear-base-0.1.0@sha256:3c0e27562e0f4b23f6f004b2c853350a67e59554f0c8bcf6c1fbf4237686dbad,5469
+    pantry-tree:
+      size: 6620
+      sha256: c5045f2bb326a59af36032bd5c67c6377bc548c317988478ee84322e301427fd
+  original:
+    hackage: linear-base-0.1.0@sha256:3c0e27562e0f4b23f6f004b2c853350a67e59554f0c8bcf6c1fbf4237686dbad,5469
 snapshots:
 - completed:
     size: 623654
