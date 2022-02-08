@@ -2,11 +2,9 @@
 {-@ LIQUID "--ple" @-}
 {-@ LIQUID "--reflection" @-}
 {-@ LIQUID "--no-pattern-inline" @-}
-{-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--no-adt" @-}
 {-@ LIQUID "--exact-data-cons" @-}
 
-{-@ LIQUID "--no-adt" @-}
 {-@ LIQUID "--short-names" @-}
 {-@ LIQUID "--no-pattern-inline" @-}
 
