@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 7a411089234e3e3b616a6a0e958c349f7d5f9ce41ba886dbd017c9110c24da3e
+-- hash: d0aabee8f9ddc97af07eb873b7aa023d9200950a62b3fac5b7009065b5b12aaf
 
 name:           main
 version:        0.1.0.0
@@ -27,6 +27,7 @@ source-repository head
 
 library
   exposed-modules:
+      Control.Concurrent.MVar.Linear
       Lib
       RIO
   other-modules:
