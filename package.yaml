@@ -24,7 +24,7 @@ dependencies:
   - liquidhaskell
   - liquid-containers
   - stm
-  - linear-base
+    #  - linear-base
 
 ghc-options:
   - -fplugin=LiquidHaskell

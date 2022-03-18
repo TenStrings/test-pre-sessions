@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: d0aabee8f9ddc97af07eb873b7aa023d9200950a62b3fac5b7009065b5b12aaf
+-- hash: 3b2650568ae5400eeee64d3c062c7273c2cecac51f8276d5d63cb4b43833c874
 
 name:           main
 version:        0.1.0.0
@@ -27,7 +27,6 @@ source-repository head
 
 library
   exposed-modules:
-      Control.Concurrent.MVar.Linear
       Lib
       RIO
   other-modules:
@@ -36,8 +35,7 @@ library
       src
   ghc-options: -fplugin=LiquidHaskell
   build-depends:
-      linear-base
-    , liquid-base
+      liquid-base
     , liquid-containers
     , liquidhaskell
     , stm
@@ -51,8 +49,7 @@ executable main-exe
       app
   ghc-options: -fplugin=LiquidHaskell -rtsopts -with-rtsopts=-N -threaded -fplugin=LiquidHaskell
   build-depends:
-      linear-base
-    , liquid-base
+      liquid-base
     , liquid-containers
     , liquidhaskell
     , main

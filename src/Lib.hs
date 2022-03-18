@@ -19,12 +19,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE LinearTypes #-}
 
 module Lib where
 import Control.Concurrent (Chan, MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
 import Prelude
-import qualified Prelude.Linear
 import Data.Bifunctor (Bifunctor(bimap))
 import Data.Functor ((<$>))
 import Control.Applicative ((<|>))
