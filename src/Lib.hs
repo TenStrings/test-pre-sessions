@@ -2,10 +2,11 @@
 {-@ LIQUID "--ple" @-}
 {-@ LIQUID "--reflection" @-}
 {-@ LIQUID "--no-pattern-inline" @-}
-{-@ LIQUID "--prune-unsorted" @-}
 {-@ LIQUID "--no-adt" @-}
 {-@ LIQUID "--exact-data-cons" @-}
 {-@ LIQUID "--higherorder" @-}
+{-@ LIQUID "--no-termination" @-}
+{-@ LIQUID "--diffcheck" @-}
 
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -28,144 +29,325 @@ import Data.Functor ((<$>))
 import Control.Applicative ((<|>))
 import Data.Tuple (swap)
 import Control.Monad (void)
-import RIO (RIO (RIO), rState, World (cnt, vs, W), emptyWorld, liftRIO, setV, vmap, vdom, getEntry, rioAssert, getLastEntry, Value(..), toInt, isInt, getW, setW, getD)
+import RIO (RIO (RIO), rState, World (W), liftRIO)
 import qualified Data.Set as Set
 import qualified Data.Set as Map
 import Data.Map (Map)
+import Unsafe.Coerce (unsafeCoerce)
 
 mainFunc = do
-    putStrLn "hello world"
-    incrS
+    putStrLn "running session examples"
+    ex1
+    sumSesh
+    minSesh
 
-{-@ client :: (Send Value (Recv Value End)) -> RIO <{\w -> EmptyWorld w}> () @-}
-client :: (Send Value (Recv Value End)) -> RIO ()
-client s = do
-    w1 <- getW
+-- variables de estado
 
-    s <- send (I 5) s
+{-@ measure lastVal :: World -> Int @-}
+{-@ measure lastLastVal :: World -> Int @-}
+{-@ measure sum :: World -> Int @-}
+{-@ measure sent :: World -> Set Int @-}
+{-@ measure min :: World -> Int @-}
 
-    -- Esto no funciona porque estoy chequeando por igualdad... en realidad lo
-    -- que me gustaría es chequear por subtipo, pero no creo que se pueda.
-    --
-    -- Supongo que lo que tendría sentido realmente es chequear en la
-    -- poscondición con un predicado (como estoy haciendo actualmente)... El
-    -- tema es que no hay forma trivial de reusar eso para llenar los valores
-    -- del otro lado de la sesión. Principalmente porque uno es un predicado
-    -- sobre el estado final y lo que necesito para "llenar" el otro lado son
-    -- predicados sobre estados parciales.
-    --
-    -- La otra forma es que el contrato no diga anyInt si no (I 5), pero
-    -- ahí medio que estaría sobrespecificando realmente
-    --
-    -- sent <- getLastEntry
-    -- rioAssert $ clientC w1 == sent
+-- estado inicial (inicialización)
+--
+{-@ predicate EmptyWorld W = sum W = 0 && lastVal W = 0 && lastLastVal W = 0 && min W = maxInt && Set_emp (sent W) @-}
 
-    -- tampoco sé cómo encapsular esto
-    w <- getW
-    expect $ serverC w
+-- transiciones para cada variable de estado
 
-    (y, s) <- recv s
+{-@ predicate LastValT W1 V W2 = lastLastVal W2 = lastVal W1 && lastVal W2 = V @-}
+{-@ predicate SumT W1 V W2 = sum W2 = V + (sum W1) @-}
+{-@ predicate MinT W1 V W2 = min W2 = cmin V (min W1) @-}
+{-@ predicate SentT W1 V W2 = sent W2 = Set_cup (Set_sng V) (sent W1) @-}
 
-    -- solo para chequear que no rompí nada, serverC ya verifica esto en
-    -- principio (o sea, es más que nada para verificar que se pueden usar los
-    -- refinements del contrato acá adentro)
-    x <- getEntry 1
-    rioAssert $ (toInt y) == (toInt x) + 1
-    -- rioAssert $ (toInt y) == (toInt x) + 2 -- unsafe
-    rioAssert $ (toInt y) > 0
+-- conjunción de las anteriores
+{-@ predicate NextWorld W1 V W2 = LastValT W1 V W2 && SumT W1 V W2 && MinT W1 V W2 && SentT W1 V W2 @-}
 
-    close s
+-- constraints específicos para cada tag
 
-    -- debuging, borrar después
-    -- w <- getW
-    -- liftRIO $ print w
+{-@ predicate AscP W V = lastVal W < V @-}
+{-@ predicate SumP W V = V = sum W @-}
+{-@ predicate MinP W V = V = min W @-}
+{-@ predicate LinearEqP W V = (lastVal W + lastLastVal W) * V = 100 @-}
+{-@ predicate UniqP W V = not (Set_mem V (sent W)) @-}
+
+-- helper
+{-@ predicate Pure W1 W2 = W1 = W2 @-}
 
 
-{-@ server :: (Recv Value (Send Value End)) -> RIO <{\w -> EmptyWorld w}> () @-}
-server :: (Recv Value (Send Value End)) -> RIO ()
-server s = do
-    w <- getW
-    expect $ clientC w
+data Asc
+data Sum
+data Min
+data Uniq
+data LinearEq
+data Any
 
-    (x, s) <- recv s
+{-@ inline cmin @-}
+cmin :: Int -> Int -> Int 
+cmin a b = if a < b then a else b 
 
-    w1 <- getW
+{-@ inline maxInt @-}
+maxInt :: Int
+maxInt = 9223372036854775807
 
-    s <- send (I $ (toInt x) + 1) s 
-    -- s <- send (I $ (toInt x) + 2) s -- unsafe
-
-    -- o sea, esto funciona, pero es super hacky e incómodo, y no sé me ocurre
-    -- una forma de encapsularlo/abstraerlo como para que se haga
-    -- automáticamente (o al menos forzosamente)
-    -- bah, se me ocurre una... template haskell por ahí, o sea, sustituciones
-    -- a nivel sintáctico... digamos, es automatizable supongo, solo que no sé
-    -- cómo hacerlo por no tener algo así como predicados de alto orden (si es
-    -- que eso tiene sentido). 
-    --
-    -- O sea, reemplazar: 
-    -- `s <- send a s` por 
-    --  `w1 <- getW; s <- send a s; sent <- getLastEntry; rioAssert ... `
-    -- sería una solución, lo preferible sería hacerlo con una función, pero no
-    -- sé cómo tipar `send` en ese caso, porque no puedo usar el contrato en el
-    -- refinement
-    sent <- getLastEntry
-    -- nótese que w1 es el 'estado' antes del último send
-    rioAssert $ serverC w1 == sent
-
-    close s
-
-
-{-@ assume anyInt :: Int @-}
-anyInt :: Int
-anyInt = 5
-
-incrS = connect client server
-
-
-{-@ serverC :: {w:World | isInt (Map_select (vmap (vs w)) 1) && Set_mem 1 (listElts (vdom (vs w)))  }  -> {v:Value | v = (I (toInt (Map_select (vmap (vs w)) 1) + 1))} @-}
-serverC :: World -> Value
--- la implementación no importa realmente, pero si pongo `undefined` crashea
--- al ejecutarlo, aunque en realidad no sé por qué si el valor no se usa (o
--- sea, el World en su enteridad no se usa). Tendría que pensarlo un poco más,
--- o entender mejor la lazyness de haskell supongo.
-serverC w = I $ (toInt $ getD 1 (vs w)) + 1
--- serverC w = undefined
+-- * instancias de send y recv que extienden los predicados base con los del tag
+--
+-- esto es básicamente generic specialization hecha a mano, debería ser
+-- mecanizable. son todas iguales modulo un rename de la función, el tag y el
+-- predicado (que son el mismo nombre, así que es un solo rename)
+--
 --
 
-{-
- Otra opción es escribirlo directamente como monada, y se puede embeber
- directamente en el cliente... el tema es que en el server no tiene sentido
- Podría escribir el predicado de manera que diga que si el valor ya existe es X
- y si no existe inserto X, y ahí se podría usar en los dos, pero no sé qué
- tanto sentido tendría (o sea, no sé si es muy distinto a escribir dos predicados diferentes).
- Me gustaría algo un poco menos error-prone
-{-@ serverC :: RIO <
-        {\w -> IsPrev w && Set_mem 1 (listElts (vdom (vs w))) && isInt (Map_select (vmap (vs w)) 1) && cnt w = 1 },
-        {\w1 x w2 -> AddValue w2 (I (toInt (Map_select (vmap (vs w2)) 1) + 1)) w1 }> ()
-@-}
-serverC :: RIO ()
-serverC = do 
-    x <- getEntry 1
-    setV $ I ((toInt x) + 1)
+{-@ assume sendAsc :: Session s => v1:Int -> Send Asc {v2:Int | v1 = v2} s -> RIO<{\w -> AscP w v1}, {\w1 b w2 -> NextWorld w1 v1 w2}> s @-}
+sendAsc :: Session s => Int -> Send Asc Int s -> RIO s
+sendAsc = sendUnsafe
 
-    return ()
+{-@ assume recvAsc :: Recv Asc Int s -> RIO <{\w -> true}, {\w1 v w2 -> AscP w1 (fst v) && NextWorld w1 (fst v) w2}> (Int, s) @-}
+recvAsc :: Recv Asc Int s -> RIO (Int, s)
+recvAsc = recvUnsafe
 
--}
+{-@ assume sendSum :: Session s => v1:Int -> Send Sum {v2:Int | v1 = v2} s -> RIO<{\w -> SumP w v1}, {\w1 b w2 -> NextWorld w1 v1 w2}> s @-}
+sendSum :: Session s => Int -> Send Sum Int s -> RIO s
+sendSum = sendUnsafe
 
-{-@ clientC :: w:World  -> {v:Value | isInt v} @-}
-clientC :: World -> Value
-clientC w = I anyInt
+{-@ assume recvSum :: Recv Sum Int s -> RIO <{\w -> true}, {\w1 v w2 -> SumP w1 (fst v) && NextWorld w1 (fst v) w2}> (Int, s) @-}
+recvSum :: Recv Sum Int s -> RIO (Int, s)
+recvSum = recvUnsafe
+
+{-@ assume sendMin :: Session s => v1:Int -> Send Min {v2:Int | v1 = v2} s -> RIO<{\w -> MinP w v1}, {\w1 b w2 -> NextWorld w1 v1 w2}> s @-}
+sendMin :: Session s => Int -> Send Min Int s -> RIO s
+sendMin = sendUnsafe
+
+{-@ assume recvMin :: Recv Min Int s -> RIO <{\w -> true}, {\w1 v w2 -> MinP w1 (fst v) && NextWorld w1 (fst v) w2}> (Int, s) @-}
+recvMin :: Recv Min Int s -> RIO (Int, s)
+recvMin = recvUnsafe
+
+{-@ assume sendLinearEq :: Session s => v1:Int -> Send LinearEq {v2:Int | v1 = v2} s -> RIO<{\w -> LinearEqP w v1}, {\w1 b w2 -> NextWorld w1 v1 w2}> s @-}
+sendLinearEq :: Session s => Int -> Send LinearEq Int s -> RIO s
+sendLinearEq = sendUnsafe
+
+{-@ assume recvLinearEq :: Recv LinearEq Int s -> RIO <{\w -> true}, {\w1 v w2 -> LinearEqP w1 (fst v) && NextWorld w1 (fst v) w2}> (Int, s) @-}
+recvLinearEq :: Recv LinearEq Int s -> RIO (Int, s)
+recvLinearEq = recvUnsafe
+
+{-@ assume sendUniq :: Session s => v1:Int -> Send Uniq {v2:Int | v1 = v2} s -> RIO<{\w -> UniqP w v1}, {\w1 b w2 -> NextWorld w1 v1 w2}> s @-}
+sendUniq :: Session s => Int -> Send Uniq Int s -> RIO s
+sendUniq = sendUnsafe
+
+{-@ assume recvUniq :: Recv Uniq Int s -> RIO <{\w -> true}, {\w1 v w2 -> UniqP w1 (fst v) && NextWorld w1 (fst v) w2}> (Int, s) @-}
+recvUniq :: Recv Uniq Int s -> RIO (Int, s)
+recvUniq = recvUnsafe
+
+-- * ex 1
+--
+
+{-@ ex1Cnt :: (Send Any Int (Send Any Int (Send LinearEq Int (Recv Sum Int End)))) -> RIO<{\w -> EmptyWorld w}> () @-}
+ex1Cnt :: (Send Any Int (Send Any Int (Send LinearEq Int (Recv Sum Int End)))) -> RIO ()
+ex1Cnt s = do
+    s <- send 20 s
+    s <- send 5 s
+    s <- sendLinearEq 4 s
+    (y, s) <- recvSum s
+
+    close s
+
+-- {-@ ignore ex1Srv @-}
+{-@ ex1Srv :: (Recv Any Int (Recv Any Int (Recv LinearEq Int (Send Sum Int End)))) -> RIO <{\w -> EmptyWorld w}> () @-}
+ex1Srv :: (Recv Any Int (Recv Any Int (Recv LinearEq Int (Send Sum Int End)))) -> RIO ()
+ex1Srv s = do
+    (x, s) <- recv s
+    (y, s) <- recv s
+    (z, s) <- recvLinearEq s
+
+    return $ liquidAssert $ (x + y) * z >= 100
+
+    s <- sendSum (x + y + z) s 
+
+    -- Lo siguiente es unsafe, pero por alguna razón también hace que el
+    -- archivo de smt2 se vaya de mambo (aunque nada disparatado igual)
+    -- lo cual es interesante, porque lo anterior pareciera ser fácil de
+    -- verificar. 
+    -- Puede ser un tema de cómo maneja la aritmética, y no el mismo
+    -- problema que el otro.
+    -- s <- sendSum (x + y + z + 1) s 
+
+    close s
+
+
+ex1 = connect ex1Cnt ex1Srv
+
+-- ex 2
+-- sesión recursiva que suma los elementos que recibe, con el constraint de que
+-- los números que recibe tienen que ser crecientes
+--
+newtype SumSrv
+  = MkSumSrv (Offer (Recv Asc Int SumSrv) (Send Sum Int End))
+newtype SumCnt
+  = MkSumCnt (Select (Send Asc Int SumCnt) (Recv Sum Int End))
+
+{-@ sumSrv :: tot:Int -> SumSrv -> RIO<{\w -> tot = sum w}> () @-}
+sumSrv :: Int -> SumSrv -> RIO ()
+sumSrv tot (MkSumSrv s) = offerEither s $ \x -> case x of
+  Left   s -> do (x, s) <- recvAsc s; sumSrv (tot + x) s
+  Right  s -> do s <- sendSum tot s; close s
+
+{-@ sumCnt :: xs:[Int]<{\a b -> a < b}> -> SumCnt -> RIO<{\w -> lastVal w < head xs}> () @-}
+sumCnt :: [Int] -> SumCnt -> RIO ()
+sumCnt (x:xs) (MkSumCnt s) = do
+    s <- selectLeft s
+    MkSumCnt s <- sendAsc x s
+    -- no tengo ni idea de por qué agregar esto hace que ande o sea, imagino
+    -- que escribirlo hace que materialize el refinement, pero esperaría que lo
+    -- haga sin esto. No es algo que no haya visto antes en compiladores
+    -- normales igual (poner asserts para eliminar bound checks, por ejemplo),
+    -- pero pareciera ser un bug (aunque no es unsoudness, así que no es tan
+    -- grave)
+    assertLastValueIs x
+    sumCnt xs (MkSumCnt s)
+sumCnt [] (MkSumCnt s) = do
+    s <- selectRight s
+    (tot, s) <- recvSum s
+    liftRIO $ print tot
+    close s
+
+{-@ sumCntBad :: SumCnt -> RIO <{\w -> EmptyWorld w}> () @-}
+sumCntBad :: SumCnt -> RIO ()
+sumCntBad (MkSumCnt s) = do 
+    s <- selectLeft s
+    MkSumCnt s <- sendAsc 100 s
+    s <- selectLeft s
+    MkSumCnt s <- sendAsc 200 s
+    -- descomentar lo siguiente hace que exploten los refinements, lo que me
+    -- sugiere que el problema tiene que ver con cómo instancia los bounds o
+    -- algo con el monadic bind
+    -- el workaround es partir cosas en pedazos, creo (como la función de arriba)
+    --
+    -- s <- selectLeft s
+    -- MkSumCnt s <- sendAsc 300 s
+    --s <- selectLeft s
+    --MkSumCnt s <- sendAsc 400 s
+    --s <- selectLeft s
+    --MkSumCnt s <- sendAsc 500 s
+    s <- selectRight s
+    (tot, s) <- recvSum s
+
+    liftRIO $ print tot
+    close s
+
+
+instance Session SumSrv
+  where
+    type Dual SumSrv = SumCnt
+    newS = do 
+        (ch_srv, ch_cnt) <- newS
+        return (MkSumSrv ch_srv, MkSumCnt ch_cnt)
+
+instance Session SumCnt
+  where
+    type Dual SumCnt = SumSrv
+    newS = do
+        (ch_cnt, ch_srv) <- newS
+        return (MkSumCnt ch_cnt, MkSumSrv ch_srv)
+
+
+-- sumSesh = connect sumCnt1 (sumSrv 0)
+sumSesh = connect (sumCnt [1, 2, 3, 4, 5, 6, 7, 27]) (sumSrv 0)
+
+
+-- ex 3
+-- server recursivo similar al de arriba, pero que devuelve el mínimo de los
+-- números que recibe, y que require que no se le manden repetidos
+--
+newtype MinSrv
+  = MkMinSrv (Offer (Recv Uniq Int MinSrv) (Send Min Int End))
+newtype MinCnt
+  = MkMinCnt (Select (Send Uniq Int MinCnt) (Recv Min Int End))
+
+{-@ minSrv :: current_min:Int -> MinSrv -> RIO<{\w -> current_min = min w}> () @-}
+minSrv :: Int -> MinSrv -> RIO ()
+minSrv min (MkMinSrv s) = offerEither s $ \x -> case x of
+  Left   s -> do (x, s) <- recvUniq s; minSrv (if x < min then x else min) s
+  Right  s -> do s <- sendMin min s; close s
+
+{-@ minCnt :: xs:UList Int -> MinCnt -> RIO<{\w -> not (Set_mem (head xs) (sent w))}> () @-}
+minCnt :: [Int] -> MinCnt -> RIO ()
+minCnt (x:xs) (MkMinCnt s) = do
+    s <- selectLeft s
+    MkMinCnt s <- sendUniq x s
+    assertLastValueIs x
+    minCnt xs (MkMinCnt s)
+minCnt [] (MkMinCnt s) = do
+    s <- selectRight s
+    (tot, s) <- recvMin s
+    liftRIO $ putStrLn $ "minimum is: " ++ (show tot)
+    close s
+
+{-@ minCntBad :: MinCnt -> RIO <{\w -> EmptyWorld w}> () @-}
+minCntBad :: MinCnt -> RIO ()
+minCntBad (MkMinCnt s) = do
+    s <- selectLeft s
+    MkMinCnt s <- sendUniq 100 s
+    s <- selectLeft s
+    MkMinCnt s <- sendUniq 200 s
+    -- el próximo send hace que explote la cantidad de cosas a probar
+    -- imagino que el problema es el diccionario
+    -- s <- selectLeft s
+    -- MkMinCnt s <- sendUniq 300 s
+    s <- selectRight s
+    (min, s) <- recvMin s
+
+    return $ liquidAssert $ min <= 100 && min < 200
+
+    liftRIO $ print min
+    close s
+
+instance Session MinSrv
+  where
+    type Dual MinSrv = MinCnt
+    newS = do 
+        (ch_srv, ch_cnt) <- newS
+        return (MkMinSrv ch_srv, MkMinCnt ch_cnt)
+
+instance Session MinCnt
+  where
+    type Dual MinCnt = MinSrv
+    newS = do
+        (ch_cnt, ch_srv) <- newS
+        return (MkMinCnt ch_cnt, MkMinSrv ch_srv)
+
+
+-- minSesh = connect minCnt1 (minSrv maxInt)
+minSesh = connect (minCnt [100, 200, 150, 250, 300, 350, 1]) (minSrv maxInt)
+
+{-@ measure dups @-}
+dups :: [Int] -> Set.Set Int 
+dups []        = Set.empty
+dups (x:xs) = if Set.member x (elements xs) then Set.singleton x `Set.union` dups xs else dups xs
+
+{-@ measure elements @-}
+elements :: [Int] -> Set.Set Int 
+elements []        = Set.empty
+elements (x:xs) = Set.singleton x `Set.union` elements xs
+
+
+{-@ predicate ListUnique X = (Set_emp (dups X)) @-}
+
+{-@ type UList a = {v:[a] | (ListUnique v)}     @-}
+
 
 -- * Session types
 
-{-@ data Send a s = Send (SendOnce (a, Dual s)) @-}
-data Send a s = Send (SendOnce (a, Dual s))
-{-@ data Recv a s = Recv (RecvOnce (a, s)) @-}
-data Recv a s = Recv (RecvOnce (a, s))
+{-@ data Send tag a s = Send (SendOnce (a, Dual s)) @-}
+data Send tag a s = Send (SendOnce (a, Dual s))
+{-@ data Recv tag a s = Recv (RecvOnce (a, s)) @-}
+data Recv tag a s = Recv (RecvOnce (a, s))
 data End      = End SyncOnce
 
-{-@ data variance Recv covariant covariant @-}
-{-@ data variance Send contravariant covariant @-}
+
+-- FIXME: invariant para el type tag? como que no sé si podría ser útil que subtipe
+--
+{-@ data variance Recv invariant covariant covariant @-}
+{-@ data variance Send invariant contravariant covariant @-}
 
 
 -- * Duality and session initiation
@@ -176,12 +358,12 @@ class (Dual (Dual s) ~ s) => Session s where
   type Dual s = result | result -> s
   newS :: IO (s, Dual s)
 
-instance Session s => Session (Send a s) where
-  type Dual (Send a s) = Recv a (Dual s)
+instance Session s => Session (Send tag a s) where
+  type Dual (Send tag a s) = Recv tag a (Dual s)
   newS = bimap Send Recv <$> new'
 
-instance Session s => Session (Recv a s) where
-  type Dual (Recv a s) = Send a (Dual s)
+instance Session s => Session (Recv tag a s) where
+  type Dual (Recv tag a s) = Send tag a (Dual s)
   newS = bimap Recv Send . swap <$> new'
 
 instance Session End where
@@ -195,37 +377,67 @@ instance Session () where
 
 -- * Communication primitives
 
-{-@ send :: Session s => v1:Value -> Send {v2:Value | v1 = v2 } s -> RIO<{\w1 -> IsPrev w1}, {\w1 b w2 -> AddValue w2 v1 w1 }> s @-}
-send :: Session s => Value -> Send Value s -> RIO s
-send x (Send ch_s) = do
-  setV x -- add value to the environment
+{-@ assume send :: Session s => v1:Int -> Send Any {v2:Int | v1 = v2} s -> RIO<{\w1 -> true}, {\w1 b w2 -> NextWorld w1 v1 w2}> s @-}
+send :: Session s => Int -> Send Any Int s -> RIO s
+send = sendUnsafe
+
+
+{-@ assume recv :: Recv Any Int s -> RIO<{\w -> true}, {\w1 v w2 -> NextWorld w1 (fst v) w2}> (Int, s) @-}
+recv :: Recv Any Int s -> RIO (Int, s)
+recv = recvUnsafe
+
+{-@ assume sendUnsafe :: Session s => v1:Int -> Send a {v2:Int | v1 = v2} s -> RIO<{\w1 -> true}, {\w1 b w2 -> NextWorld w1 v1 w2}> s @-}
+sendUnsafe :: Session s => Int -> Send a Int s -> RIO s
+sendUnsafe x (Send ch_s) = do
   (here, there) <- (liftRIO newS)
   liftRIO $ send' ch_s (x, there)
   return here
 
 
-{-@ expect :: g:Value -> RIO <{\w1 -> IsPrev w1}, {\w1 b w2 -> AddValue w2 g w1 }> () @-}
-expect :: Value -> RIO ()
-expect v = do 
-  setV v
-  return ()
-
-{-@ assume recv :: Recv Value s -> RIO <{\w1 -> cnt w1 >= 1}, {\w1 b w2 -> w1 = w2 && (fst b) = Map_select (vmap (vs w1)) (cnt w1) }> (Value, s) @-}
-recv :: Recv Value s -> RIO (Value, s)
-recv (Recv ch_r) = do
+{-@ assume recvUnsafe :: Recv a Int s -> RIO<{\w -> true}, {\w1 v w2 -> NextWorld w1 (fst v) w2}> (Int, s) @-}
+recvUnsafe :: Recv a Int s -> RIO (Int, s)
+recvUnsafe (Recv ch_r) = do
   liftRIO $ recv' ch_r
 
-{-@ close :: End -> RIO <{\x -> true}, {\w1 b w2 -> w1 = w2}> () @-}
+{-@ close :: End -> RIO <{\x -> true}, {\w1 b w2 -> Pure w1 w2}> () @-}
 close :: End -> RIO ()
 close (End s) = liftRIO $ sync s
 
-{-@ connect :: (Session s) => (s -> RIO <{\w -> EmptyWorld w}> ()) -> (Dual s -> RIO <{\w -> EmptyWorld w}> a) -> IO a @-}
+{-@ assume connect :: (Session s) => (s -> RIO <{\w -> EmptyWorld w}> ()) -> (Dual s -> RIO <{\w -> EmptyWorld w}> a) -> IO a @-}
 connect :: (Session s) => (s -> RIO ()) -> (Dual s -> RIO a) -> IO a
 connect k1 k2 = do 
   (s1, s2) <- newS
   void (forkIO (gi (k1 s1)))
   gi (k2 s2)
-  where gi rio = let io = rState rio $ emptyWorld in fmap fst io
+  where gi rio = let io = rState rio $ W in fmap fst io
+
+
+--
+-- branching
+
+type Select s_1 s_2 = Send Any (Either (Dual s_1) (Dual s_2)) ()
+type Offer s_1 s_2 = Recv Any (Either s_1 s_2) ()
+
+
+{-@ assume selectLeft :: Session s => Select s_1 s_2 -> RIO<{\w1 -> true}, {\w1 v w2 -> Pure w1 w2 }> s_1 @-}
+selectLeft :: (Session s_1) => Select s_1 s_2 -> RIO s_1
+selectLeft (Send s) = do 
+  (here, there) <- (liftRIO newS)
+  liftRIO $ send' s (Left there, ())
+  return here
+
+{-@ assume selectRight :: Session s => Select s_1 s_2 -> RIO<{\w1 -> true}, {\w1 v w2 -> Pure w1 w2}> s_2 @-}
+selectRight :: (Session s_2) => Select s_1 s_2 -> RIO s_2
+selectRight (Send s) = do 
+  (here, there) <- (liftRIO newS)
+  liftRIO $ send' s (Right there, ())
+  return here
+
+{-@ assume offerEither :: forall <p :: World -> Bool, q :: World -> a -> World -> Bool>. Offer s_1 s_2 -> (Either s_1 s_2 -> RIO<p, q> a) -> RIO<p, q> a @-}
+offerEither ::  Offer s_1 s_2 -> (Either s_1 s_2 -> RIO a) -> RIO a
+offerEither (Recv s) match = do 
+    (e, ()) <- (liftRIO $ recv' s)
+    match e
 
 -- * One-shot channels
 
@@ -267,90 +479,13 @@ newSync = do
 sync :: SyncOnce -> IO ()
 sync (SyncOnce ch_s ch_r) = do send' ch_s (); recv' ch_r
 
-
--- -- *
-
--- Experimentos con sesiones recursivas, por ahora están ignoradas porque
--- todavía no se me ocurre cómo hacer que funcione
+--  un par de helpers
 --
--- type Select s_1 s_2 = Send (Either (Dual s_1) (Dual s_2)) ()
--- type Offer s_1 s_2 = Recv (Either s_1 s_2) ()
--- 
--- 
--- newtype SumSrv
---   = MkSumSrv (Offer (Recv Value SumSrv) (Send Value End))
--- newtype SumCnt
---   = MkSumCnt (Select (Send Value SumCnt) (Recv Value End))
--- 
--- -- sumSrv :: Int -> SumSrv -> RIO ()
--- -- sumSrv tot (MkSumSrv s) = offerEither s $ \x -> case x of
--- --   Left   s -> do expect (I anyInt); (x, s) <- recv s; sumSrv (tot + (toInt x)) s
--- --   Right  s -> do s <- send (I tot) s; close s
--- 
--- {-@ ignore sumSrv @-}
--- {-@ sumSrv :: i:Int -> SumSrv -> RIO<{\w -> i = 0 => EmptyWorld w && i > 0 => IsPrev w}> () @-}
--- sumSrv :: Int -> SumSrv -> RIO ()
--- sumSrv tot (MkSumSrv s) = offerEither s $ \x -> case x of
---   Left   s -> sumSrvLeft tot s
---   Right  s -> do s <- send (I tot) s; close s
--- 
--- {-@ ignore sumSrvLeft @-}
--- {-@ sumSrvLeft :: Int -> (Recv Value SumSrv) -> RIO<{\w -> IsPrev w}> () @-}
--- sumSrvLeft :: Int -> (Recv Value SumSrv) -> RIO ()
--- sumSrvLeft tot s = do 
---   expect (I anyInt)
---   (x, s) <- recv s
---   sumSrv (tot + (toInt x)) s
--- 
--- {-@ sumCnt :: SumCnt -> RIO <{\w -> EmptyWorld w}> () @-}
--- sumCnt :: SumCnt -> RIO ()
--- sumCnt (MkSumCnt s) = do
---     s <- selectLeft s
---     MkSumCnt s <- send (I 1) s
---     s <- selectLeft s
---     MkSumCnt s <- send (I 100) s
---     s <- selectRight s
---     expect $ (I 101)
---     (tot, s) <- recv s
--- 
---     close s
--- 
--- instance Session SumSrv
---   where
---     type Dual SumSrv = SumCnt
---     newS = do 
---         (ch_srv, ch_cnt) <- newS
---         return (MkSumSrv ch_srv, MkSumCnt ch_cnt)
--- 
--- instance Session SumCnt
---   where
---     type Dual SumCnt = SumSrv
---     newS = do
---         (ch_cnt, ch_srv) <- newS
---         return (MkSumCnt ch_cnt, MkSumSrv ch_srv)
--- 
--- 
--- sumSesh = connect sumCnt (sumSrv 0)
---
--- {-@ selectLeft :: Session s => Select s_1 s_2 -> RIO<{\w1 -> IsPrev w1}, {\w1 b w2 -> AddValue w2 L w1 }> s_1 @-}
--- selectLeft :: (Session s_1) => Select s_1 s_2 -> RIO s_1
--- selectLeft (Send s) = do 
---   setV L
---   (here, there) <- (liftRIO newS)
---   liftRIO $ send' s (Left there, ())
---   return here
--- 
--- {-@ selectRight :: Session s => Select s_1 s_2 -> RIO<{\w1 -> IsPrev w1}, {\w1 b w2 -> AddValue w2 R w1 }> s_2 @-}
--- selectRight :: (Session s_2) => Select s_1 s_2 -> RIO s_2
--- selectRight (Send s) = do 
---   setV R
---   (here, there) <- (liftRIO newS)
---   liftRIO $ send' s (Right there, ())
---   return here
--- 
--- {-@ offerEither :: forall <p :: World -> Bool, q :: World -> a -> World -> Bool>. Offer s_1 s_2 -> (Either s_1 s_2 -> RIO<p, q> a) -> RIO<p, q> a @-}
--- offerEither ::  Offer s_1 s_2 -> (Either s_1 s_2 -> RIO a) -> RIO a
--- offerEither (Recv s) match = do 
---     (e, ()) <- (liftRIO $ recv' s)
---     match e
+{-@ liquidAssert :: {v:Bool | v} -> () @-}
+liquidAssert :: Bool -> ()
+liquidAssert b = () 
+
+{-@ assertLastValueIs :: x:Int -> RIO<{\w -> lastVal w = x}> () @-}
+assertLastValueIs :: Int -> RIO ()
+assertLastValueIs _ = return ()
 
