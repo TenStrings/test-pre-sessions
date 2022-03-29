@@ -1,0 +1,26 @@
+packages:
+  - .
+
+extra-deps:
+  - text-format-0.3.2
+  - Diff-0.3.4
+
+  - git: https://github.com/ucsd-progsys/liquidhaskell
+    commit: 892552d4e7177da1135a157624363a8d5107c623
+    subdirs:
+      - .
+      - liquid-base
+      - liquid-ghc-prim
+      - liquid-containers
+      - liquid-prelude
+  - git: https://github.com/ucsd-progsys/liquid-fixpoint
+    commit: d34add2bb85a3edfd905acbd32cec29f55409c75
+  #- git: https://github.com/dorchard/betty-book-haskell-sessions
+  # - git: /home/ecioppettini/Tesis/betty-book-haskell-sessions/
+  #   commit: d326263607978a8983b80007690d7353d6976b69
+  #   subdirs:
+  #     - IY/full-sessions-0.6.2.1
+  # TODO: remove after fixing full-sessions?
+  - network-2.6.3.6@sha256:1ca79d81af02d7acd6032d5e6c9bde4618a8fdcfbe19bd42b49d420183975df0,2666
+
+resolver: nightly-2020-10-03
