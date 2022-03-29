@@ -48,7 +48,7 @@ divServer (c :: Chan (Ch "c")) (d :: (Chan (Ch "d"))) = do
 
 divClient (c :: Chan (Op "c")) (d :: (Chan (Op "d"))) = do
   send c (2 :: Int)
-  send c (NZ 0)
+  send c (NZ 1) -- unsound
   answer <- recv d
   putStrLn $ "result " ++ show answer
 
@@ -105,7 +105,6 @@ repProc = new $ \(c, c') -> do
 -- Exp
 {- 
   try to check that two different values sent/received are different
-  current status: FAIL
 -}
 
 -- this won't parse, so it is not possible to add refinements this way inside
