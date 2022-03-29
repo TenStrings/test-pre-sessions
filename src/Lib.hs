@@ -31,11 +31,11 @@ end (End s) = return ()
 
 {-@ assume selectLeft :: Typestate s => Branch s_1 s_2 -> RIO<{\w1 -> true}, {\w1 v w2 -> Pure w1 w2 }> s_1 @-}
 selectLeft :: (Typestate s_1) => Branch s_1 s_2 -> RIO s_1
-selectLeft (Branch s _) = return s
+selectLeft (A _) = return $ newS
 
 {-@ assume selectRight :: Typestate s => Branch s_1 s_2 -> RIO<{\w1 -> true}, {\w1 v w2 -> Pure w1 w2}> s_2 @-}
 selectRight :: (Typestate s_2) => Branch s_1 s_2 -> RIO s_2
-selectRight (Branch _ s) = return s
+selectRight (A _) = return $ newS
 
 newtype Rec
   = MkRec (Branch (A Int Rec) (B End))
@@ -68,8 +68,7 @@ data A a s = A s
 data B s = B s
 data End      = End ()
 
-{-@ data Branch c1 c2 = Branch c1 c2 @-}
-data Branch c1 c2 = Branch c1 c2
+type Branch c1 c2 = A (Either c1 c2) ()
 
 
 -- recursive constructors
@@ -88,9 +87,6 @@ instance Typestate End where
 
 instance Typestate () where
   newS = ()
-
-instance (Typestate s1, Typestate s2) => Typestate (Branch s1 s2) where
-  newS = Branch newS newS 
 
 instance Typestate Rec
   where
