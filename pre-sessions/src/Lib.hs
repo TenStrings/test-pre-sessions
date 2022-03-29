@@ -103,6 +103,7 @@ server0 s = do
     close s
     putStrLn "End"
 
+-- el fork no anda, no es unsound, solo lo rechaza
 {-@ ignore example0 @-}
 example0 = do
     c' <- fork server0
@@ -134,4 +135,5 @@ send_d a t = Contract a t
 
 {-@ test :: Contract <{\x -> x == 1}, {\x c -> (next c) = x + 1}> Int (Contract Int NC) @-}
 test :: Contract Int (Contract Int NC)
+-- test = send_d 1 (send_c 3 NC) -- esto es unsafe
 test = send_d 1 (send_c 2 NC)
